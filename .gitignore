@@ -1,0 +1,55 @@
+# Node.js
+node_modules/
+.nyc_output/
+coverage/
+
+# Strawberry-mochios logs
+mochios.logs
+sprintf.logs
+
+# TypeScript
+*tsbuildinfo
+
+# Build files
+dist/
+dist-tests/
+
+# Runtime data
+*.log
+*.pid
+*.seed
+
+# Configuration files
+.env
+.env.development
+.env.production
+.env.test
+
+# IDE and Editor files
+.idea/
+.ionide/
+.vscode/
+.obsidian/
+.dotfiles/
+
+# Constants
+CONST
+
+# Folder for storing secrets
+SECRET
+
+# Key directories (.gitignore files within these directories)
+dist/
+dist-tests/
+node_modules/
+test/
+
+# Constants
+CONST/
+const/
+
+# Runtime data
+readme.md
+
+# nul files
+nul
