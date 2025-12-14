@@ -8,6 +8,7 @@ import { runAgentLoop } from './agent/loop.js';
 import { displayWelcome, displaySessionInfo, setVerboseMode } from './ui/display.js';
 import { c } from './ui/colors.js';
 import { EnhancedInput } from './ui/input.js';
+import { setThinking } from './ui/thinking.js';
 
 const cwd = process.cwd();
 
@@ -26,6 +27,7 @@ program
   .option('-p, --prompt <text>', 'Run with a prompt in automated mode')
   .option('-v, --verbose', 'Show full tool outputs and audit details')
   .option('-q, --quiet', 'Compact output (less verbose)')
+  .option('-t, --think', 'Enable thinking/reflection mode for deeper reasoning')
   .option('--resume', 'Resume the last session in this directory')
   .option('--session <uuid>', 'Resume a specific session by UUID')
   .action(async (opts) => {
@@ -34,6 +36,7 @@ program
     // Quiet overrides verbose, automated defaults to verbose, interactive defaults to compact
     const verbose = opts.quiet ? false : (opts.verbose ?? !!opts.prompt);
     setVerboseMode(verbose);
+    if (opts.think) setThinking(true);
     displayWelcome();
 
     let session;
@@ -65,6 +68,7 @@ program
 
     if (opts.prompt && !opts.resume && !opts.session) {
       session.originalPrompt = opts.prompt;
+      session.history.push({ role: 'user', content: opts.prompt });
       saveSession(session);
     }
 

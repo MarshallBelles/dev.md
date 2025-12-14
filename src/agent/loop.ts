@@ -111,10 +111,10 @@ export const runAgentLoop = async (session: Session, options: LoopOptions): Prom
 
         if (thinkingResult.thinking) {
           displayThinking(thinkingResult.thinking);
-          // Add thinking as assistant reflection in history
+          // Add thinking as context for the next response (as user message to avoid consecutive assistant messages)
           session.history.push({
-            role: 'assistant',
-            content: `[Internal Reasoning]\n${thinkingResult.thinking}`
+            role: 'user',
+            content: `[Your reasoning from thinking step]:\n${thinkingResult.thinking}\n\nNow continue with your next action based on this analysis.`
           });
           session.totalTokens += thinkingResult.tokens;
           saveSession(session);

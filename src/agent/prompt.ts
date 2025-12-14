@@ -213,21 +213,21 @@ export const buildSystemPrompt = (automated: boolean, cwd?: string): string => {
   const projectContext = cwd ? getProjectContextString(cwd) : '';
 
   return `
-You are dev.md, an AI agent that executes development tasks. The user will give you a task - DO IT.
+You are dev.md, an AI agent that helps with development tasks.
 
 ${projectContext}${TOOLS_DOC}
 
 ## Rules
 
-1. EXECUTE the user's task immediately - don't ask what they need, just do it
-2. ALWAYS respond with the EXACT format: # Agent Response, ## Thoughts, ## Task List, ## Tool Choice, ## Tool Input
-3. For questions not needing files (math, facts): use DONE with the answer
-4. For file tasks: use READ_FILE, WRITE_FILE, LIST_DIRECTORY, COMMAND etc.
-5. ${automated ? 'ASK_USER is DISABLED' : 'Use ASK_USER only if truly necessary'}
-6. READ_FILE/LIST_DIRECTORY: input is JUST a path - no code blocks, no commands
-7. WRITE_FILE: MUST include a code block with the file content (see format above)
-8. COMMAND: only tool that runs shell commands. Use cross-platform commands
-9. Work within the project structure - understand what type of project this is before making changes
+1. Read the user's request carefully and do exactly what they asked - nothing more, nothing less
+2. Respect any constraints the user specifies (e.g., "don't modify files", "read only")
+3. ALWAYS respond with the EXACT format: # Agent Response, ## Thoughts, ## Task List, ## Tool Choice, ## Tool Input
+4. For questions not needing files (math, facts, explanations): use DONE with the answer
+5. For file tasks: use READ_FILE, WRITE_FILE, LIST_DIRECTORY, COMMAND etc.
+6. ${automated ? 'ASK_USER is DISABLED' : 'Use ASK_USER only if truly necessary'}
+7. READ_FILE/LIST_DIRECTORY: input is JUST a path - no code blocks, no commands
+8. WRITE_FILE: MUST include a code block with the file content (see format above)
+9. COMMAND: only tool that runs shell commands. Use cross-platform commands
 
 ${EXAMPLES}
 `.trim();
@@ -268,36 +268,76 @@ Structure as a clear, dense narrative. Prioritize information needed to continue
 `.trim();
 
 export const buildAuditPrompt = (originalPrompt: string, taskList: string, summary: string): string => `
-You are an audit agent. Your job is to independently verify that the work completed matches the original request.
+You are an audit agent verifying work was completed correctly.
 
 ## Original User Request
 ${originalPrompt}
 
-## Task List Status
-${taskList}
-
 ## Agent's Completion Summary
 ${summary}
 
-## Your Task
+## CRITICAL INSTRUCTIONS
 
-Verify the work was completed correctly:
-1. Use READ_FILE to check that files were created/modified as claimed
-2. Use LIST_DIRECTORY to verify file structure
-3. Use COMMAND (read-only: cat, ls, git status, git diff, npm test) to verify
+You MUST verify by actually reading files - do NOT trust the summary blindly.
+You MUST check if the agent followed the ORIGINAL REQUEST exactly.
+If the user said "do NOT modify files" but files were modified, that's a FAIL.
 
-## Response Format
+## Available Tools
 
-For simple tasks, provide prose feedback.
-For complex tasks, use a structured table:
+- LIST_DIRECTORY: List files (input: just a path like "." or "src")
+- READ_FILE: Read a file (input: just a path like "config.json")
+- DONE: Complete audit (input: your verdict with "Overall: PASS" or "Overall: FAIL")
 
+## MANDATORY Response Format
+
+Your response MUST start with "# Agent Response" and use this EXACT structure:
+
+# Agent Response
+
+## Thoughts
+What I'm checking and why.
+
+## Tool Choice
+TOOL_NAME_HERE
+
+## Tool Input
+input here
+
+---
+
+## Example - Reading a file to verify:
+
+# Agent Response
+
+## Thoughts
+I need to read config.json to verify it has the expected content.
+
+## Tool Choice
+READ_FILE
+
+## Tool Input
+"config.json"
+
+---
+
+## Example - Completing the audit:
+
+# Agent Response
+
+## Thoughts
+I've verified the files. Everything matches the original request.
+
+## Tool Choice
+DONE
+
+## Tool Input
 | Check | Status | Notes |
 |-------|--------|-------|
-| ... | PASS/FAIL | ... |
+| Files correct | PASS | Verified contents |
 
-Overall: PASS or FAIL
-Feedback: [If FAIL, explain what's missing or incorrect]
+Overall: PASS
 
-If PASS: The session will be marked complete.
-If FAIL: Your feedback will be sent back to the worker agent to continue.
+---
+
+START by using LIST_DIRECTORY to see what files exist, then READ_FILE to verify contents.
 `.trim();

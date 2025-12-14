@@ -1,12 +1,17 @@
 {
   "name": "dev-md",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A markdown-native AI agent CLI for development tasks",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "dev": "dist/index.js"
   },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "build:tests": "tsc -p tests/tsconfig.json",
@@ -17,8 +22,30 @@
     "test:tools": "node --test dist-tests/tools.test.js",
     "test:workflows": "node --test dist-tests/workflows.test.js",
     "test:sessions": "node --test dist-tests/sessions.test.js",
-    "test:watch": "node --test --watch dist-tests/*.test.js"
+    "test:watch": "node --test --watch dist-tests/*.test.js",
+    "prepublishOnly": "npm run build && npm test"
   },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "markdown",
+    "llm",
+    "automation",
+    "development",
+    "openai",
+    "anthropic"
+  ],
+  "author": "MarshallBelles",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MarshallBelles/dev.md.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MarshallBelles/dev.md/issues"
+  },
+  "homepage": "https://github.com/MarshallBelles/dev.md#readme",
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
