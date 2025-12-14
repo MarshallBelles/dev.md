@@ -1,59 +1,44 @@
 # dev-md
 
-The name of the project is dev.md - this is because the agent parses markdown for tool calls.
+A CLI agent that uses markdown formatting for tool calls. Works with any OpenAI-compatible API.
 
-**AI Agent CLI for Development Tasks**
-
-A markdown-native AI agent that automates development tasks through an interactive interface.
-
-![TypeScript](https://img.shields.io/badge/type-script-2c2c2c?style=flat-square)
-![CLI](https://img.shields.io/badge/cli-seafoam?style=flat-square)
-![Markdown](https://img.shields.io/badge/markdown-native?style=flat-square)
-
-> ⚠️ **Security Note:** dev.md executes commands and modifies files based on AI model output. Only run it in directories you trust. API keys are stored in plain text at `~/.dev-md/config.json`.
-
-## Overview
-
-dev-md is a revolutionary AI-powered development assistant that operates entirely through markdown files. It's designed to help developers automate repetitive tasks, perform complex operations, and manage development workflows using natural language instructions within markdown documents.
-
-The agent works by interpreting markdown files as both instructions and documentation, allowing for seamless integration between human-readable documentation and automated execution.
+> ⚠️ **Security Note:** dev.md executes commands and modifies files based on AI model output. Only run it in directories you trust. Config stored at `~/.dev-md/config.json`.
 
 ## Key Features
 
-### Markdown-Native Interface
-- All interactions happen through markdown files
-- Natural language processing directly in markdown
-- Documentation and automation coexist in the same files
+### Markdown Tool Format
+The agent's responses use markdown structure for tool calls, parsed by the CLI:
+```markdown
+## Tool Choice
+WRITE_FILE
 
-### Multi-Tool Execution
-- Parallel execution of multiple tools simultaneously
-- Intelligent task orchestration based on dependencies
-- Comprehensive tool integration system
+## Tool Input
+"src/index.js"
 
-### Interactive Sessions
-- Persistent session management
-- Real-time progress tracking
-- Interactive feedback loops
+```js
+console.log('hello');
+```
+```
 
-### Advanced Capabilities
-- Context-aware task execution
-- Automated error recovery
-- Progress visualization and reporting
+### Available Tools
+- `LIST_DIRECTORY` - List files (supports glob patterns)
+- `READ_FILE` - Read file contents
+- `WRITE_FILE` - Create/overwrite files
+- `FIND_AND_REPLACE_IN_FILE` - Edit files with find/replace blocks
+- `COMMAND` - Execute shell commands
+- `ASK_USER` - Request user input (interactive mode only)
+- `DONE` - Complete task and trigger audit
 
-## Architecture
+### Session Management
+- Sessions persist to disk with full conversation history
+- Resume previous sessions with `--resume` or `--session <uuid>`
+- Sessions track task lists, token usage, and working directory
 
-### Core Components
-- **Agent**: The main AI processing engine that interprets markdown instructions
-- **Tools**: Extensible system for file operations, command execution, and more
-- **Sessions**: State management for multi-step operations
-- **Context**: Dynamic environment information sharing
-- **Parser**: Markdown document analysis and instruction extraction
+### Audit System
+When the agent calls `DONE`, an audit agent verifies the work was completed correctly before marking the session complete. Failed audits return feedback to the main agent.
 
-### Supported Tools
-- File System Operations (read, write, list, modify)
-- Command Execution (cross-platform shell commands)
-- Interactive User Communication
-- Task Management and Progress Tracking
+### Thinking Mode
+Optional reflection step (`--think`) where the agent reasons about tool results before continuing. Helps with complex multi-step debugging tasks.
 
 ## Installation
 
@@ -61,99 +46,67 @@ The agent works by interpreting markdown files as both instructions and document
 npm install -g dev-md
 ```
 
-## Quick Start
+## Setup
 
-1. Create a markdown file with your development task:
-```md
-# My Development Task
-
-## Steps
-1. Create a new project directory
-2. Initialize git repository
-3. Install dependencies
-```
-
-2. Run the agent:
+Run the setup wizard to configure your API endpoint:
 ```bash
-dev-md my-task.md
+dev setup
 ```
 
-## Usage Examples
-
-### Basic Task Execution
-Create a markdown file with your requirements:
-```md
-# Setup New Project
-
-This will set up a new Node.js project with TypeScript support.
-
-## Steps
-1. Create project directory `my-app`
-2. Initialize npm project
-3. Install TypeScript and related packages
-4. Create basic project structure
-```
-
-### Interactive Mode
-Run in interactive mode to receive real-time updates:
-```bash
-dev-md my-task.md --interactive
-```
-
-### Session Management
-Continue from previous session:
-```bash
-dev-md my-task.md --resume
-```
-
-## Configuration
-
-### Environment Variables
-- `DEV_MD_API_KEY` - API key for external services
-- `DEV_MD_MODEL` - LLM model to use (default: gpt-4)
-- `DEV_MD_LOG_LEVEL` - Logging verbosity level
-
-### Configuration File
-Create `.devmdrc` in your project root:
+This creates `~/.dev-md/config.json` with:
 ```json
 {
+  "apiUrl": "http://localhost:8000/v1",
+  "apiKey": "your-api-key",
   "model": "gpt-4",
-  "logLevel": "info",
-  "maxRetries": 3
+  "maxContextTokens": 200000,
+  "commandTimeout": 30,
+  "maxRetries": 3,
+  "maxLoops": 1000,
+  "sessionRetentionDays": 30
 }
 ```
 
-## Development Workflow
+Works with any OpenAI-compatible API (OpenAI, Anthropic via proxy, vLLM, ollama, etc).
 
-### 1. Define Your Task
-Write clear markdown instructions describing what you want to accomplish.
+## Usage
 
-### 2. Execute with dev-md
-Run the agent against your markdown file to begin automation.
+### Automated Mode
+Run a single prompt non-interactively:
+```bash
+dev -p "Create a Node.js Express server with user routes"
+```
 
-### 3. Monitor Progress
-Watch real-time updates and interact with the agent during execution.
+### Interactive Mode
+Start an interactive session:
+```bash
+dev
+```
 
-### 4. Review Results
-Examine the executed tasks and any generated documentation.
+### Options
+```
+-p, --prompt <text>   Run with a prompt (automated mode)
+-v, --verbose         Show full tool outputs and audit details
+-q, --quiet           Compact output
+-t, --think           Enable thinking/reflection mode
+--resume              Resume last session in this directory
+--session <uuid>      Resume a specific session
+```
+
+### Session Commands
+```bash
+dev sessions list     # List all sessions
+dev config            # Open config in editor
+```
 
 ## Security Considerations
 
-- **DANGER: This system has full system access capabilities** - It can read, write, and execute commands on your machine
-- Only execute markdown files you completely trust
-- Review task lists before execution
-- Be cautious with file system operations
-- Use appropriate environment variables for sensitive data
-- Run in a sandboxed environment or VM for safety
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a pull request
+- **Full system access**: The agent can read, write, and execute commands on your machine
+- Only run in directories you trust
+- Review the agent's task list before it executes
+- API keys are stored in plain text in `~/.dev-md/config.json`
+- Consider running in a container or VM for untrusted tasks
 
 ## License
 
-MIT License
+MIT
