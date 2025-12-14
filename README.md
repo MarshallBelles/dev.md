@@ -1,5 +1,7 @@
 # dev-md
 
+The name of the project is dev.md - this is because the agent parses markdown for tool calls.
+
 **AI Agent CLI for Development Tasks**
 
 A markdown-native AI agent that automates development tasks through an interactive interface.
@@ -7,6 +9,8 @@ A markdown-native AI agent that automates development tasks through an interacti
 ![TypeScript](https://img.shields.io/badge/type-script-2c2c2c?style=flat-square)
 ![CLI](https://img.shields.io/badge/cli-seafoam?style=flat-square)
 ![Markdown](https://img.shields.io/badge/markdown-native?style=flat-square)
+
+> ⚠️ **Security Note:** dev.md executes commands and modifies files based on AI model output. Only run it in directories you trust. API keys are stored in plain text at `~/.dev-md/config.json`.
 
 ## Overview
 
@@ -135,10 +139,12 @@ Examine the executed tasks and any generated documentation.
 
 ## Security Considerations
 
-- Only execute markdown files you trust
+- **DANGER: This system has full system access capabilities** - It can read, write, and execute commands on your machine
+- Only execute markdown files you completely trust
 - Review task lists before execution
 - Be cautious with file system operations
 - Use appropriate environment variables for sensitive data
+- Run in a sandboxed environment or VM for safety
 
 ## Contributing
 
