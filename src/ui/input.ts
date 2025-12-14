@@ -1,89 +1,5 @@
-import * as readline from 'readline';
-import { readdirSync } from 'fs';
-import { join, relative, basename } from 'path';
 import { c } from './colors.js';
-
-interface FileMatch {
-  path: string;
-  name: string;
-  score: number;
-}
-
-// Simple fuzzy matching - returns score (higher is better, 0 = no match)
-const fuzzyMatch = (pattern: string, text: string): number => {
-  const p = pattern.toLowerCase();
-  const t = text.toLowerCase();
-
-  if (t === p) return 1000;
-  if (t.includes(p)) return 500 + (p.length / t.length) * 100;
-
-  let pi = 0;
-  let score = 0;
-  let consecutive = 0;
-
-  for (let ti = 0; ti < t.length && pi < p.length; ti++) {
-    if (t[ti] === p[pi]) {
-      score += 10 + consecutive * 5;
-      consecutive++;
-      pi++;
-    } else {
-      consecutive = 0;
-    }
-  }
-
-  return pi === p.length ? score : 0;
-};
-
-// Recursively find files (limited depth)
-const findFiles = (dir: string, maxDepth = 4, currentDepth = 0): string[] => {
-  if (currentDepth > maxDepth) return [];
-
-  const results: string[] = [];
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.name.startsWith('.') ||
-          entry.name === 'node_modules' ||
-          entry.name === 'dist' ||
-          entry.name === 'build' ||
-          entry.name === '__pycache__') continue;
-
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        results.push(...findFiles(fullPath, maxDepth, currentDepth + 1));
-      } else {
-        results.push(fullPath);
-      }
-    }
-  } catch {
-    // Ignore permission errors
-  }
-  return results;
-};
-
-// Search for files matching a pattern
-export const searchFiles = (pattern: string, cwd: string, limit = 5): FileMatch[] => {
-  if (!pattern) return [];
-
-  const files = findFiles(cwd);
-  const matches: FileMatch[] = [];
-
-  for (const file of files) {
-    const name = basename(file);
-    const relPath = relative(cwd, file);
-    const nameScore = fuzzyMatch(pattern, name);
-    const pathScore = fuzzyMatch(pattern, relPath) * 0.5;
-    const score = Math.max(nameScore, pathScore);
-
-    if (score > 0) {
-      matches.push({ path: relPath, name, score });
-    }
-  }
-
-  return matches
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-};
+import { isThinkingEnabled, toggleThinking } from './thinking.js';
 
 export interface EnhancedInputOptions {
   cwd: string;
@@ -91,127 +7,150 @@ export interface EnhancedInputOptions {
 }
 
 export class EnhancedInput {
-  private cwd: string;
   private prompt: string;
-  private fileCache: string[] | null = null;
 
   constructor(options: EnhancedInputOptions) {
-    this.cwd = options.cwd;
     this.prompt = options.prompt || c.cyan('  You: ');
   }
 
-  private getFiles(): string[] {
-    if (!this.fileCache) {
-      this.fileCache = findFiles(this.cwd);
-    }
-    return this.fileCache;
-  }
-
-  private createCompleter(): readline.Completer {
-    return (line: string): [string[], string] => {
-      // Check for @pattern at end of line
-      const atMatch = line.match(/@(\S*)$/);
-      if (atMatch) {
-        const pattern = atMatch[1];
-        const files = this.getFiles();
-        const matches: string[] = [];
-
-        for (const file of files) {
-          const name = basename(file);
-          const relPath = relative(this.cwd, file);
-          if (!pattern || fuzzyMatch(pattern, name) > 0 || fuzzyMatch(pattern, relPath) > 0) {
-            matches.push(relPath);
-          }
-        }
-
-        // Sort by score and limit
-        const scored = matches.map(m => ({
-          path: m,
-          score: Math.max(fuzzyMatch(pattern, basename(m)), fuzzyMatch(pattern, m) * 0.5)
-        }));
-        scored.sort((a, b) => b.score - a.score);
-        const topMatches = scored.slice(0, 8).map(s => s.path);
-
-        // Return completions that replace @pattern
-        const prefix = line.slice(0, line.length - atMatch[0].length);
-        const completions = topMatches.map(m => prefix + m);
-
-        return [completions, line];
-      }
-
-      return [[], line];
-    };
+  private getPrompt(): string {
+    const thinkingIndicator = isThinkingEnabled() ? c.magenta('💭 ') : '';
+    return thinkingIndicator + this.prompt;
   }
 
   async getInput(): Promise<string> {
     return new Promise((resolve) => {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-        completer: this.createCompleter()
-      });
-
       const lines: string[] = [];
+      let currentLine = '';
       let inMultiLine = false;
 
-      const promptForLine = () => {
-        const prefix = inMultiLine ? c.dim('  ... ') : this.prompt;
+      const writePrompt = () => {
+        const prefix = inMultiLine ? c.dim('  ... ') : this.getPrompt();
+        process.stdout.write(prefix);
+      };
 
-        rl.question(prefix, (line) => {
-          // Empty line in multi-line mode = submit
-          if (inMultiLine && line === '') {
-            rl.close();
-            resolve(lines.join('\n').trim());
-            return;
-          }
+      const redrawLine = () => {
+        // Clear current line and rewrite
+        process.stdout.write('\r\x1b[K');
+        const prefix = inMultiLine ? c.dim('  ... ') : this.getPrompt();
+        process.stdout.write(prefix + currentLine);
+      };
 
-          // First empty line = submit empty (let caller handle)
-          if (!inMultiLine && line === '') {
-            rl.close();
-            resolve('');
-            return;
+      writePrompt();
+
+      // Enable raw mode
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      process.stdin.resume();
+
+      const onData = (key: Buffer) => {
+        const char = key.toString();
+
+        // Ctrl+C - exit
+        if (char === '\x03') {
+          process.stdout.write('\n');
+          if (process.stdin.isTTY) process.stdin.setRawMode(false);
+          process.stdin.removeListener('data', onData);
+          process.exit(0);
+        }
+
+        // Tab - toggle thinking mode
+        if (char === '\t') {
+          toggleThinking();
+          const state = isThinkingEnabled() ? c.green('ON') : c.red('OFF');
+          process.stdout.write(`\n  ${c.yellow('Thinking mode:')} ${state}\n`);
+          redrawLine();
+          return;
+        }
+
+        // Enter - submit line
+        if (char === '\r' || char === '\n') {
+          process.stdout.write('\n');
+
+          // Empty line handling
+          if (currentLine === '') {
+            if (inMultiLine) {
+              // Submit multi-line input
+              if (process.stdin.isTTY) process.stdin.setRawMode(false);
+              process.stdin.removeListener('data', onData);
+              resolve(lines.join('\n').trim());
+              return;
+            } else {
+              // Submit empty
+              if (process.stdin.isTTY) process.stdin.setRawMode(false);
+              process.stdin.removeListener('data', onData);
+              resolve('');
+              return;
+            }
           }
 
           // Check for multi-line indicators
-          const isMultiLineStart = line.endsWith('\\') ||
-                                   line.endsWith('{') ||
-                                   line.endsWith('[') ||
-                                   line.includes('```');
+          const isMultiLineStart = currentLine.endsWith('\\') ||
+                                   currentLine.endsWith('{') ||
+                                   currentLine.endsWith('[') ||
+                                   currentLine.includes('```');
 
           if (isMultiLineStart && !inMultiLine) {
             inMultiLine = true;
           }
 
           // Remove trailing backslash if used as continuation
-          if (line.endsWith('\\')) {
-            lines.push(line.slice(0, -1));
+          if (currentLine.endsWith('\\')) {
+            lines.push(currentLine.slice(0, -1));
           } else {
-            lines.push(line);
+            lines.push(currentLine);
           }
+
+          currentLine = '';
 
           // If not in multi-line mode, submit immediately
           if (!inMultiLine) {
-            rl.close();
+            if (process.stdin.isTTY) process.stdin.setRawMode(false);
+            process.stdin.removeListener('data', onData);
             resolve(lines.join('\n').trim());
             return;
           }
 
-          promptForLine();
-        });
+          writePrompt();
+          return;
+        }
+
+        // Backspace
+        if (char === '\x7f' || char === '\b') {
+          if (currentLine.length > 0) {
+            currentLine = currentLine.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+          return;
+        }
+
+        // Ctrl+U - clear line
+        if (char === '\x15') {
+          currentLine = '';
+          redrawLine();
+          return;
+        }
+
+        // Regular character (printable)
+        if (char.length === 1 && char.charCodeAt(0) >= 32) {
+          currentLine += char;
+          process.stdout.write(char);
+        }
       };
 
-      promptForLine();
+      process.stdin.on('data', onData);
     });
   }
 
   showHelp(): void {
     console.log(c.dim(`
   Input tips:
-  • Type @filename then Tab to autocomplete file paths
   • End line with \\ for multi-line input
   • Empty line submits in multi-line mode
   • "exit" to quit, "new" for new session
+  • Tab to toggle thinking mode (💭 appears in prompt when active)
+  • Ctrl+U to clear line, Ctrl+C to exit
 `));
   }
 
@@ -219,7 +158,8 @@ export class EnhancedInput {
     // No persistent state to clean up anymore
   }
 
-  clearCache(): void {
-    this.fileCache = null;
+  // Export the thinking state for the agent to use
+  static getThinkingState(): boolean {
+    return isThinkingEnabled();
   }
 }

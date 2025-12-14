@@ -1,3 +1,5 @@
+import { getProjectContextString } from '../context/index.js';
+
 export const TOOLS_DOC = `
 ## Available Tools
 
@@ -207,10 +209,13 @@ DONE
 Created the project structure with config.json, installed all dependencies, and set up the basic file layout. The project is ready for development.
 `.trim();
 
-export const buildSystemPrompt = (automated: boolean): string => `
+export const buildSystemPrompt = (automated: boolean, cwd?: string): string => {
+  const projectContext = cwd ? getProjectContextString(cwd) : '';
+
+  return `
 You are dev.md, an AI agent that executes development tasks. The user will give you a task - DO IT.
 
-${TOOLS_DOC}
+${projectContext}${TOOLS_DOC}
 
 ## Rules
 
@@ -222,9 +227,11 @@ ${TOOLS_DOC}
 6. READ_FILE/LIST_DIRECTORY: input is JUST a path - no code blocks, no commands
 7. WRITE_FILE: MUST include a code block with the file content (see format above)
 8. COMMAND: only tool that runs shell commands. Use cross-platform commands
+9. Work within the project structure - understand what type of project this is before making changes
 
 ${EXAMPLES}
 `.trim();
+};
 
 export const COMPRESSION_PROMPT = `
 You are a context compression assistant. Create a comprehensive summary of the conversation and work completed so far. This summary will replace the full history to free up context space.

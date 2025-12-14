@@ -9,6 +9,7 @@ import { runAudit } from './audit.js';
 import { displayParsed, displayResult, displayCompression, displayFinalAnswer, displayAuditStatus, displayToolExecution, isVerbose } from '../ui/display.js';
 import { c } from '../ui/colors.js';
 import { getTokenCount } from '../ui/spinner.js';
+import { isThinkingEnabled, performThinking, displayThinking } from '../ui/thinking.js';
 
 export interface LoopOptions {
   automated: boolean;
@@ -17,7 +18,7 @@ export interface LoopOptions {
 export const runAgentLoop = async (session: Session, options: LoopOptions): Promise<void> => {
   const config = loadConfig();
   const maxRetries = options.automated ? config.maxRetriesAutomated : config.maxRetries;
-  const systemPrompt = buildSystemPrompt(options.automated);
+  const systemPrompt = buildSystemPrompt(options.automated, session.workingDirectory);
   const ctx: ToolContext = { cwd: session.workingDirectory, automated: options.automated };
 
   // Ensure system prompt is always first in history
@@ -99,8 +100,26 @@ export const runAgentLoop = async (session: Session, options: LoopOptions): Prom
 
     // Add combined tool results to history
     if (toolResults.length > 0) {
-      session.history.push({ role: 'user', content: `Tool results:\n${toolResults.join('\n\n')}` });
+      const toolResultsContent = `Tool results:\n${toolResults.join('\n\n')}`;
+      session.history.push({ role: 'user', content: toolResultsContent });
       saveSession(session);
+
+      // Perform thinking step if enabled (and not hitting DONE)
+      if (isThinkingEnabled() && !hitDone) {
+        const context = `Original task: ${session.originalPrompt}\n\nCurrent progress: ${session.taskList.map(t => `[${t.status === 'complete' ? 'x' : t.status === 'in-progress' ? '~' : ' '}] ${t.text}`).join('\n')}`;
+        const thinkingResult = await performThinking(context, toolResultsContent);
+
+        if (thinkingResult.thinking) {
+          displayThinking(thinkingResult.thinking);
+          // Add thinking as assistant reflection in history
+          session.history.push({
+            role: 'assistant',
+            content: `[Internal Reasoning]\n${thinkingResult.thinking}`
+          });
+          session.totalTokens += thinkingResult.tokens;
+          saveSession(session);
+        }
+      }
     }
 
     // Handle DONE after executing preceding tools

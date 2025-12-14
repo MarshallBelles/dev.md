@@ -48,8 +48,5 @@ test/
 CONST/
 const/
 
-# Runtime data
-readme.md
-
 # nul files
 nul

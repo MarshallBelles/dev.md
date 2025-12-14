@@ -45,6 +45,18 @@ export const displayParsed = (parsed: ParsedResponse): void => {
     for (const tool of parsed.tools) {
       console.log('\n' + box(`Tool: ${tool.toolChoice}`, tool.toolInput || '(no input)', c.yellow));
     }
+  } else {
+    // Compact mode: show condensed thoughts
+    if (parsed.thoughts) {
+      const condensed = parsed.thoughts
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l)
+        .slice(0, 3)
+        .join(' ')
+        .slice(0, 120);
+      console.log(c.dim(`\n  💭 ${condensed}${parsed.thoughts.length > 120 ? '...' : ''}\n`));
+    }
   }
   // In compact mode, tools are displayed via displayToolExecution as they execute
 };
