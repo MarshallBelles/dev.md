@@ -278,10 +278,19 @@ function getReadmeExcerpt(cwd: string, maxLines = 10): string {
   return '';
 }
 
+// Bounds the worst case (e.g. launching `dev` from a home directory or a huge
+// monorepo) so the directory tree can't silently balloon the system prompt - a
+// launch from ~/ was observed producing a ~29K token tree from an unbounded walk.
+const MAX_TREE_LINES = 150;
+
 export function buildProjectContext(cwd: string): ProjectContext {
   const { type, name, description } = detectProjectType(cwd);
-  const treeLines = getDirectoryTree(cwd, 2);
-  const structure = treeLines.length > 0 ? treeLines.join('\n') : '(empty or inaccessible)';
+  const allTreeLines = getDirectoryTree(cwd, 2);
+  const truncated = allTreeLines.length > MAX_TREE_LINES;
+  const treeLines = truncated ? allTreeLines.slice(0, MAX_TREE_LINES) : allTreeLines;
+  const structure = treeLines.length > 0
+    ? treeLines.join('\n') + (truncated ? `\n... (truncated: showing ${MAX_TREE_LINES} of ${allTreeLines.length} entries)` : '')
+    : '(empty or inaccessible)';
   const customContext = loadCustomContext(cwd);
 
   // If no description from project file, try README

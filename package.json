@@ -18,12 +18,15 @@
     "dev": "tsc -w",
     "start": "node dist/index.js",
     "pretest": "npm run build && npm run build:tests",
-    "test": "node --test dist-tests/*.test.js",
+    "test": "node --test --test-concurrency=8 dist-tests/*.test.js",
     "test:tools": "node --test dist-tests/tools.test.js",
     "test:workflows": "node --test dist-tests/workflows.test.js",
     "test:sessions": "node --test dist-tests/sessions.test.js",
     "test:watch": "node --test --watch dist-tests/*.test.js",
-    "prepublishOnly": "npm run build && npm test"
+    "e2e": "npm run build && npm run build:tests && node --test --test-concurrency=1 dist-tests/e2e/*.test.js",
+    "e2e:llm": "npm run build && npm run build:tests && node --test dist-tests/e2e/llm.test.js",
+    "e2e:agent": "npm run build && npm run build:tests && node --test --test-concurrency=1 dist-tests/e2e/agent.test.js",
+    "e2e:subagent": "npm run build && npm run build:tests && node --test dist-tests/e2e/subagent.test.js"
   },
   "keywords": [
     "ai",

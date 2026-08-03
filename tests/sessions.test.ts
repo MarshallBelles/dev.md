@@ -261,7 +261,10 @@ describe('Multi-Session Tests', () => {
       assert.ok(r2.stdout.includes('test.txt'), 'Should see file in same directory');
 
       const session = getSessionFile(ctx, sessionId);
-      assert.strictEqual(session.workingDirectory, ctx.tempDir, 'Working directory should be preserved');
+      // Normalize paths (macOS: /private/var vs /var symlink)
+      const normActual = (session.workingDirectory || '').replace(/^\/private\//, '/');
+      const normExpected = ctx.tempDir.replace(/^\/private\//, '/');
+      assert.strictEqual(normActual, normExpected, 'Working directory should be preserved');
     });
   });
 

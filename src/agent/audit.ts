@@ -21,7 +21,10 @@ export const runAudit = async (session: Session, doneSummary: string, verbose = 
     .join('\n') || '(no tasks)';
 
   const systemPrompt = buildAuditPrompt(session.originalPrompt, taskListText, doneSummary);
-  const messages: Message[] = [{ role: 'system', content: systemPrompt }];
+  const messages: Message[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: 'Begin the audit.' },
+  ];
   const config = loadConfig();
   let loops = 0;
 
@@ -34,7 +37,15 @@ export const runAudit = async (session: Session, doneSummary: string, verbose = 
       const failMatch = response.toLowerCase().includes('overall: fail');
       if (passMatch) return { passed: true, feedback: response };
       if (failMatch) return { passed: false, feedback: response };
-      return { passed: true, feedback: response };
+      // Malformed response with no clear verdict - don't default to passed.
+      // Give the model a chance to retry with a well-formed response.
+      console.log(c.yellow('\n  Audit response format error, retrying...\n'));
+      messages.push({ role: 'assistant', content: response });
+      messages.push({
+        role: 'user',
+        content: 'ERROR: Your response was not in the correct format and did not contain a clear "Overall: PASS" or "Overall: FAIL" verdict. Please respond again using the exact # Agent Response format with a DONE tool choice and an unambiguous verdict.',
+      });
+      continue;
     }
 
     if (verbose) displayParsed(parsed);
@@ -59,10 +70,15 @@ export const runAudit = async (session: Session, doneSummary: string, verbose = 
         }
         break;
       }
-      case 'DONE':
+      case 'DONE': {
         const feedback = parsed.toolInput || parsed.thoughts;
-        const passed = !feedback.toLowerCase().includes('fail');
+        const lower = feedback.toLowerCase();
+        // Require an explicit PASS verdict (as instructed in buildAuditPrompt) rather than
+        // merely the absence of the word "fail" - an ambiguous/malformed verdict must not
+        // default to passed.
+        const passed = lower.includes('overall: pass') && !lower.includes('overall: fail');
         return { passed, feedback };
+      }
       default:
         result = `Tool ${parsed.toolChoice} not available in audit mode`;
     }
@@ -71,5 +87,7 @@ export const runAudit = async (session: Session, doneSummary: string, verbose = 
     messages.push({ role: 'user', content: `Tool result:\n${result}` });
   }
 
-  return { passed: true, feedback: 'Audit completed (max iterations reached)' };
+  // Ran out of iterations without ever reaching a clear verdict - fail closed rather
+  // than silently rubber-stamping incomplete/inconclusive work as passed.
+  return { passed: false, feedback: 'Audit could not reach a conclusive verdict after 20 iterations - treating as not verified.' };
 };

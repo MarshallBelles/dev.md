@@ -1,11 +1,25 @@
 import { loadConfig } from '../config/index.js';
-import { type Message } from '../sessions/index.js';
+import { type Message, estimateTokens } from '../sessions/index.js';
 import { startSpinner, incrementTokens, stopSpinner } from '../ui/spinner.js';
 
 interface StreamOptions {
   silent?: boolean;
   onToken?: (token: string) => void;
 }
+
+// estimateTokens is a rough chars/4 heuristic, not the server's real tokenizer - it can
+// undershoot the real count. Reserve headroom so a small estimation error never pushes
+// (real prompt tokens + max_tokens) over the model's hard context limit.
+const TOKEN_ESTIMATE_SAFETY_MARGIN = 1000;
+
+// Calculate max output tokens: normally config.maxTokens (a sane single-response
+// budget), clamped down if the context window is close to full.
+const calcMaxTokens = (messages: Message[]): number => {
+  const config = loadConfig();
+  const promptTokens = estimateTokens(messages);
+  const remaining = config.maxContextTokens - promptTokens - TOKEN_ESTIMATE_SAFETY_MARGIN;
+  return Math.max(1, Math.min(config.maxTokens, remaining));
+};
 
 export const streamCompletion = async (
   messages: Message[],
@@ -20,6 +34,7 @@ export const streamCompletion = async (
     model: config.model,
     messages: messages.map(m => ({ role: m.role, content: m.content })),
     stream: true,
+    max_tokens: calcMaxTokens(messages),
   };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

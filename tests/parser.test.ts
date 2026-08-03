@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { parseResponse, extractCodeBlock, extractFindReplace } from '../dist/parser/markdown.js';
+import { parseResponse, extractCodeBlock, extractFindReplace, extractDelegateInput, extractPath } from '../dist/parser/markdown.js';
 
 describe('Parser Tests', () => {
   describe('parseResponse', () => {
@@ -97,6 +97,42 @@ This is NOT a real tool choice, just content
       assert.ok(parsed.tools[0].toolInput.includes('## Installation'));
     });
 
+    it('should not let an unbalanced code fence in Thoughts swallow subsequent headers', () => {
+      // Regression test: a real model was observed including an illustrative,
+      // unclosed code snippet in its Thoughts prose. That left the parser's fence
+      // tracker stuck "inside a code block," which caused every following header
+      // (Task List, Tool Choice, Tool Input) to be silently absorbed as thoughts
+      // text instead of recognized - producing a false "parse failure" on an
+      // otherwise well-formed, complete response.
+      const response = `# Agent Response
+
+## Thoughts
+I need to verify the fix works. Something like:
+\`\`\`go
+func Add(a, b int) int {
+    return a + b
+}
+This should be correct based on the spec.
+
+## Task List
+[x] Review implementation
+
+## Tool Choice
+DONE
+
+## Tool Input
+Verified the implementation is correct.
+`;
+
+      const parsed = parseResponse(response);
+      assert.ok(parsed, 'A response with an unbalanced fence in Thoughts must still parse');
+      assert.strictEqual(parsed.tools.length, 1);
+      assert.strictEqual(parsed.tools[0].toolChoice, 'DONE');
+      assert.strictEqual(parsed.tools[0].toolInput, 'Verified the implementation is correct.');
+      assert.strictEqual(parsed.taskList.length, 1);
+      assert.strictEqual(parsed.taskList[0].status, 'complete');
+    });
+
     it('should handle nested code blocks in markdown files', () => {
       const response = `# Agent Response
 
@@ -189,6 +225,78 @@ dist/
       assert.strictEqual(parsed.tools[1].toolChoice, 'WRITE_FILE');
       assert.ok(parsed.tools[1].toolInput.includes('.gitignore'));
     });
+
+    it('should recognize DELEGATE as a valid tool choice', () => {
+      const response = `# Agent Response
+
+## Thoughts
+Delegating this to a subagent.
+
+## Task List
+[~] Delegate research task
+
+## Tool Choice
+DELEGATE
+
+## Tool Input
+"researcher"
+
+\`\`\`
+Summarize what specs/001_implementation_plan.md says about auth.
+\`\`\``;
+
+      const parsed = parseResponse(response);
+      assert.ok(parsed);
+      assert.strictEqual(parsed.tools[0].toolChoice, 'DELEGATE');
+    });
+  });
+
+  describe('extractDelegateInput', () => {
+    it('should extract the label and task body', () => {
+      const input = `"researcher"
+
+\`\`\`
+Please implement the login endpoint.
+\`\`\``;
+
+      const result = extractDelegateInput(input);
+      assert.ok(result);
+      assert.strictEqual(result.label, 'researcher');
+      assert.strictEqual(result.task, 'Please implement the login endpoint.');
+    });
+
+    it('should extract a multi-line task body', () => {
+      const input = `"implementer"
+
+\`\`\`
+Implement the login endpoint.
+Follow the spec in specs/003_player_auth.md.
+\`\`\``;
+
+      const result = extractDelegateInput(input);
+      assert.ok(result);
+      assert.strictEqual(result.label, 'implementer');
+      assert.strictEqual(result.task, 'Implement the login endpoint.\nFollow the spec in specs/003_player_auth.md.');
+    });
+
+    it('should return null when the code block is missing', () => {
+      const input = `"researcher"
+
+Please implement the login endpoint.`;
+
+      const result = extractDelegateInput(input);
+      assert.strictEqual(result, null);
+    });
+
+    it('should return null when the label line is empty', () => {
+      const input = `
+\`\`\`
+Please implement the login endpoint.
+\`\`\``;
+
+      const result = extractDelegateInput(input);
+      assert.strictEqual(result, null);
+    });
   });
 
   describe('extractCodeBlock', () => {
@@ -260,6 +368,34 @@ const new = 2;
       assert.ok(result);
       assert.strictEqual(result.find, 'const old = 1;');
       assert.strictEqual(result.replace, 'const new = 2;');
+    });
+  });
+
+  describe('extractPath', () => {
+    it('extracts a well-formed quoted path', () => {
+      assert.strictEqual(extractPath('"src/index.ts"'), 'src/index.ts');
+    });
+
+    it('falls back to an unquoted path as-is', () => {
+      assert.strictEqual(extractPath('src/index.ts'), 'src/index.ts');
+    });
+
+    it('regression: strips a stray leading quote when the closing quote is missing', () => {
+      // A real model was observed producing "docs/SDD.md (no closing quote). The old
+      // fallback captured the whole line INCLUDING the leading quote character, which
+      // then got baked into every path lookup ("/project/"docs/SDD.md), permanently
+      // breaking that file/directory for the rest of the run.
+      assert.strictEqual(extractPath('"docs/SDD.md'), 'docs/SDD.md');
+      assert.strictEqual(extractPath('"backend/cmd'), 'backend/cmd');
+      assert.strictEqual(extractPath('"backend/Makefile'), 'backend/Makefile');
+    });
+
+    it('strips a stray trailing quote when the opening quote is missing', () => {
+      assert.strictEqual(extractPath('docs/SDD.md"'), 'docs/SDD.md');
+    });
+
+    it('only reads the first line and ignores the rest', () => {
+      assert.strictEqual(extractPath('"backend/cmd\n\nsome other content'), 'backend/cmd');
     });
   });
 });

@@ -15,12 +15,29 @@ export interface TestContext {
   cleanup: () => void;
 }
 
-export const createTestContext = (port: number): TestContext => {
+export interface ConfigOverrides {
+  apiUrl?: string;
+  apiKey?: string;
+  model?: string;
+  maxContextTokens?: number;
+  commandTimeout?: number;
+  maxRetries?: number;
+  maxRetriesAutomated?: number;
+  maxLoops?: number;
+  sessionRetentionDays?: number;
+  maxTokens?: number;
+  commandGuardEnabled?: boolean;
+  commandGuardLLM?: boolean;
+  maxDelegateDepth?: number;
+  subagentMaxLoops?: number;
+}
+
+export const createTestContext = (port: number, overrides: ConfigOverrides = {}): TestContext => {
   const id = randomUUID().slice(0, 8);
   const tempDir = join(tmpdir(), `dev-md-test-${id}`);
   const baseConfigDir = join(tmpdir(), `dev-md-config-${id}`);
-  // The actual config dir is baseConfigDir/dev-agent (matches getConfigDir logic)
-  const configDir = join(baseConfigDir, 'dev-agent');
+  // Match actual config path: homedir()/Library/Application Support/dev-agent (macOS)
+  const configDir = join(baseConfigDir, 'Library', 'Application Support', 'dev-agent');
   mkdirSync(tempDir, { recursive: true });
   mkdirSync(configDir, { recursive: true });
   mkdirSync(join(configDir, 'sessions'), { recursive: true });
@@ -35,6 +52,7 @@ export const createTestContext = (port: number): TestContext => {
     maxRetriesAutomated: 3,
     maxLoops: 50,
     sessionRetentionDays: 30,
+    ...overrides,
   };
   writeFileSync(join(configDir, 'config.json'), JSON.stringify(config, null, 2));
 
@@ -45,6 +63,35 @@ export const createTestContext = (port: number): TestContext => {
     cleanup: () => {
       rmSync(tempDir, { recursive: true, force: true });
       rmSync(baseConfigDir, { recursive: true, force: true });
+    },
+  };
+};
+
+export interface InProcessTestContext extends TestContext {
+  // Restores process.env to what it was before this context redirected HOME/config
+  // resolution - must be called in the same test file's afterEach.
+  restoreEnv: () => void;
+}
+
+// For tests that call agent/workflow functions directly in-process (not via a
+// spawned CLI subprocess) - redirects loadConfig()'s home-directory resolution to
+// this context's temp config dir so the real dev.md code paths pick it up.
+export const createInProcessTestContext = (port: number, overrides: ConfigOverrides = {}): InProcessTestContext => {
+  const base = createTestContext(port, overrides);
+  const prevHome = process.env.HOME;
+  const prevAppData = process.env.APPDATA;
+  const prevXdg = process.env.XDG_CONFIG_HOME;
+
+  process.env.HOME = base.baseConfigDir;
+  process.env.APPDATA = base.baseConfigDir;
+  process.env.XDG_CONFIG_HOME = base.baseConfigDir;
+
+  return {
+    ...base,
+    restoreEnv: () => {
+      if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+      if (prevAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevAppData;
+      if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevXdg;
     },
   };
 };

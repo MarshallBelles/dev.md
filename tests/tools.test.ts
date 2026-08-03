@@ -1,5 +1,8 @@
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { MockAPIServer, createScriptedServer, doneResponse, auditPassResponse, formatAgentResponse, MockResponse } from './mock-server.js';
 import { createTestContext, runCLI, readTestFile, writeTestFile, testFileExists, TestContext, sleep, getTestPort } from './utils.js';
 
@@ -243,6 +246,36 @@ qux
       const content = readTestFile(ctx, 'multi.txt');
       assert.strictEqual(content, 'qux bar qux baz qux', 'All occurrences should be replaced');
     });
+
+    it('should handle special regex characters in find string', async () => {
+      writeTestFile(ctx, 'special.ts', 'const x = [1,2]; console.log(a+b);');
+
+      server.setGenerator((msgs, n) => {
+        if (n === 1) return {
+          thoughts: 'Replacing special chars.',
+          taskList: ['[~] Replace'],
+          toolChoice: 'FIND_AND_REPLACE_IN_FILE',
+          toolInput: `"special.ts"
+
+\`\`\`find
+[1,2]
+\`\`\`
+
+\`\`\`replace
+[3,4]
+\`\`\``,
+        };
+        if (n === 2) return doneResponse('Replaced brackets');
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Replace brackets'], ctx);
+      assert.strictEqual(result.exitCode, 0);
+
+      const content = readTestFile(ctx, 'special.ts');
+      assert.ok(content?.includes('[3,4]'), 'Should replace bracket content');
+      assert.ok(!content?.includes('[1,2]'), 'Original should be gone');
+    });
   });
 
   describe('COMMAND', () => {
@@ -300,6 +333,58 @@ echo "line1" && echo "line2"
     });
   });
 
+  describe('Command Guard', () => {
+    it('blocks a destructive command targeting an absolute path outside the working directory', async () => {
+      // The deterministic denylist is on by default (commandGuardEnabled) with no
+      // config override needed. Prove the block is real, not just cosmetic, by
+      // pointing the scripted command at a real file OUTSIDE ctx.tempDir and
+      // confirming it survives the run.
+      const decoyDir = mkdtempSync(join(tmpdir(), 'dev-md-guard-decoy-'));
+      const decoyFile = join(decoyDir, 'must-survive.txt');
+      writeFileSync(decoyFile, 'do not delete me');
+
+      try {
+        server.setGenerator((msgs, n) => {
+          if (n === 1) return {
+            thoughts: 'Deleting an unrelated path.',
+            taskList: ['[~] Delete path'],
+            toolChoice: 'COMMAND',
+            toolInput: `rm -rf ${decoyFile}`,
+          };
+          if (n === 2) return doneResponse('Could not complete that operation - it was blocked.');
+          return auditPassResponse();
+        });
+
+        const result = await runCLI(['-p', 'Delete a file outside the project'], ctx);
+        assert.strictEqual(result.exitCode, 0);
+        assert.ok(result.stdout.includes('blocked by safety guard'), 'Should report the command was blocked');
+        assert.ok(existsSync(decoyFile), 'The file outside the working directory must survive');
+      } finally {
+        rmSync(decoyDir, { recursive: true, force: true });
+      }
+    });
+
+    it('still allows normal file deletion within the working directory', async () => {
+      writeTestFile(ctx, 'scratch.txt', 'temporary');
+
+      server.setGenerator((msgs, n) => {
+        if (n === 1) return {
+          thoughts: 'Deleting a scratch file in the project.',
+          taskList: ['[~] Clean up'],
+          toolChoice: 'COMMAND',
+          toolInput: 'rm scratch.txt',
+        };
+        if (n === 2) return doneResponse('Removed scratch.txt');
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Clean up scratch file'], ctx);
+      assert.strictEqual(result.exitCode, 0);
+      assert.ok(!result.stdout.includes('blocked by safety guard'), 'A normal in-project delete should not be blocked');
+      assert.strictEqual(testFileExists(ctx, 'scratch.txt'), false, 'The file should actually have been deleted');
+    });
+  });
+
   describe('UPDATE_TASK_LIST', () => {
     it('should update task list without input', async () => {
       server.setGenerator((msgs, n) => {
@@ -354,6 +439,98 @@ Feedback: Missing verification step.`;
 
       const result = await runCLI(['-p', 'Task with retry'], ctx);
       assert.ok(callCount >= 3, 'Should have multiple calls due to audit failure');
+    });
+
+    it('should not treat a malformed/unparseable audit response as passed', async () => {
+      // Regression test: the audit must fail closed (retry) when its response can't be
+      // parsed and contains no clear "Overall: PASS"/"Overall: FAIL" verdict - it must
+      // never silently default to passed just because the response didn't say "fail".
+      let callCount = 0;
+      server.setGenerator((msgs, n) => {
+        callCount++;
+        if (callCount === 1) return doneResponse('Completed the requested task.');
+        if (callCount === 2) return 'Some incoherent garbled output with no clear verdict at all.';
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Complete task'], ctx);
+      assert.strictEqual(result.exitCode, 0);
+      assert.ok(callCount >= 3, 'A malformed audit response must trigger a retry, not an immediate pass');
+    });
+
+    it('should not treat an ambiguous DONE verdict lacking an explicit PASS as passed', async () => {
+      // Regression test: even a well-formed audit DONE call must require an explicit
+      // "Overall: PASS" - merely not containing the word "fail" is not enough.
+      let callCount = 0;
+      server.setGenerator((msgs, n) => {
+        callCount++;
+        if (callCount === 1) return doneResponse('Completed the requested task.');
+        if (callCount === 2) return formatAgentResponse({
+          thoughts: 'I looked things over.',
+          taskList: ['[x] Verify'],
+          toolChoice: 'DONE',
+          toolInput: 'Looks complete to me.',
+        });
+        if (callCount === 3) return doneResponse('Completed the requested task (retry).');
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Complete task'], ctx);
+      assert.strictEqual(result.exitCode, 0);
+      assert.ok(callCount >= 4, 'An ambiguous verdict without "Overall: PASS" must not short-circuit as passed');
+    });
+
+    it('should not treat an audit that exhausts all iterations as passed', async () => {
+      // Regression test: if the audit model keeps producing unparseable, verdict-less
+      // responses for all 20 iterations (a real "confused model" failure mode observed
+      // in manual testing), the loop must give up as NOT passed, not silently succeed.
+      let callCount = 0;
+      server.setGenerator((msgs, n) => {
+        callCount++;
+        if (callCount === 1) return doneResponse('Completed the requested task.');
+        if (callCount >= 2 && callCount <= 21) return 'garbled nonsense with no verdict marker at all';
+        if (callCount === 22) return doneResponse('Completed the requested task (retry).');
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Complete task'], ctx, { timeout: 60000 });
+      assert.strictEqual(result.exitCode, 0);
+      assert.ok(
+        callCount >= 23,
+        'An audit that exhausts its iteration cap must not be accepted as passed - the main loop should retry'
+      );
+    });
+  });
+
+  describe('Loop Repeat Detection', () => {
+    it('interrupts a model repeating the exact same tool call with no progress', async () => {
+      // Regression test for a real failure mode: a struggling model re-issuing an
+      // identical LIST_DIRECTORY call turn after turn instead of making progress.
+      let callCount = 0;
+      const repeatedCall: MockResponse = {
+        thoughts: 'Exploring the backend directory.',
+        taskList: ['[~] Explore backend'],
+        toolChoice: 'LIST_DIRECTORY',
+        toolInput: '"backend/cmd"',
+      };
+      server.setGenerator((msgs, n) => {
+        callCount++;
+        if (callCount <= 3) return repeatedCall;
+        if (callCount === 4) return doneResponse('Recognized the loop and stopped.');
+        return auditPassResponse();
+      });
+
+      const result = await runCLI(['-p', 'Explore the backend'], ctx, { timeout: 60000 });
+      assert.strictEqual(result.exitCode, 0, `CLI should exit cleanly:\n${result.stdout}\n${result.stderr}`);
+
+      // The 4th request (the one right after the 3rd identical call) must carry the
+      // interrupt warning, proving the loop broke the pattern instead of executing
+      // the identical call a 4th time.
+      const fourthCallMessages = server.requests[3] || [];
+      const sawWarning = fourthCallMessages.some((m: any) =>
+        typeof m.content === 'string' && m.content.includes('exact same tool with the exact same input')
+      );
+      assert.ok(sawWarning, 'The 4th request should include the repeat-interrupt warning');
     });
   });
 });

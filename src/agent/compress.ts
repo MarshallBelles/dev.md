@@ -3,9 +3,13 @@ import { estimateTokens, type Message, type Session } from '../sessions/index.js
 import { COMPRESSION_PROMPT } from './prompt.js';
 import { streamCompletion } from './api.js';
 
+// Reserve 10K tokens for automatic compaction
+const COMPACTION_RESERVE = 10000;
+
 export const needsCompression = (messages: Message[]): boolean => {
   const config = loadConfig();
-  return estimateTokens(messages) >= config.maxContextTokens;
+  const threshold = config.maxContextTokens - COMPACTION_RESERVE;
+  return estimateTokens(messages) >= threshold;
 };
 
 export const compressContext = async (

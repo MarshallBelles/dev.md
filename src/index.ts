@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { program } from 'commander';
 import { loadConfig, openConfigInEditor, configExists, runFirstTimeSetup } from './config/index.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 import {
   createSession, loadSession, getLastSessionForDir, listSessions, cleanOldSessions, saveSession
 } from './sessions/index.js';
@@ -21,7 +24,7 @@ const ensureConfig = async (): Promise<void> => {
 program
   .name('dev')
   .description('AI agent for development tasks')
-  .version('1.0.0');
+  .version(version);
 
 program
   .option('-p, --prompt <text>', 'Run with a prompt in automated mode')

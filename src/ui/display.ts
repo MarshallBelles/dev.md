@@ -97,6 +97,21 @@ export const displayAuditStatus = (passed: boolean): void => {
   console.log(`  ${msg}`);
 };
 
+// Subagent activity is shown regardless of verbose/compact mode - without it, a
+// delegated task looks like a silent, unexplained pause.
+const preview = (text: string, max = 60): string => {
+  const oneLine = text.split('\n')[0];
+  return oneLine.length > max ? oneLine.slice(0, max) + '...' : oneLine;
+};
+
+export const displaySubagentStart = (label: string, task: string): void => {
+  console.log(`\n  ${c.magenta(`🤝 Delegating to "${label}"`)} ${c.dim(`: ${preview(task)}`)}\n`);
+};
+
+export const displaySubagentReply = (label: string, result: string): void => {
+  console.log(`  ${c.success(`✓ "${label}" finished`)}${c.dim(`: ${preview(result)}`)}`);
+};
+
 export const displayWelcome = (): void => {
   console.log(c.bold.cyan('\n  dev.md') + c.dim(' - AI agent for development tasks\n'));
 };

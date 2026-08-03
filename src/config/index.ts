@@ -14,6 +14,11 @@ export interface Config {
   maxRetriesAutomated: number;
   maxLoops: number;
   sessionRetentionDays: number;
+  maxTokens: number;
+  commandGuardEnabled: boolean;
+  commandGuardLLM: boolean;
+  maxDelegateDepth: number;
+  subagentMaxLoops: number;
 }
 
 const DEFAULTS: Config = {
@@ -26,6 +31,18 @@ const DEFAULTS: Config = {
   maxRetriesAutomated: 10,
   maxLoops: 1000,
   sessionRetentionDays: 30,
+  maxTokens: 4096,
+  // Deterministic denylist for the COMMAND tool - cheap, always on by default.
+  commandGuardEnabled: true,
+  // Optional LLM second-opinion classifier for commands the denylist doesn't already
+  // block - off by default since it adds a real API call per COMMAND invocation.
+  commandGuardLLM: false,
+  // Caps nested DELEGATE recursion (a subagent delegating to its own subagent,
+  // and so on) - a couple of levels is fine, unbounded nesting is not.
+  maxDelegateDepth: 4,
+  // Loop budget granted to a subagent - smaller than the top-level default so
+  // one bad delegation can't consume the whole run.
+  subagentMaxLoops: 15,
 };
 
 export const getConfigDir = (): string => {

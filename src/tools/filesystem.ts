@@ -63,9 +63,9 @@ export const findAndReplace = (path: string, find: string, replace: string, cwd:
   try {
     const content = readFileSync(target, 'utf-8');
     if (!content.includes(find)) return `Pattern not found in file: ${target}`;
+    const count = content.split(find).length - 1;
     const updated = content.split(find).join(replace);
     writeFileSync(target, updated);
-    const count = (content.match(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
     return `Replaced ${count} occurrence(s) in: ${target}`;
   } catch (e) { return `Error: ${(e as Error).message}`; }
 };

@@ -13,6 +13,7 @@ export const TOOLS_DOC = `
 | UPDATE_TASK_LIST | (empty) | Update task list display |
 | ASK_USER | question | Ask user (interactive only) |
 | DONE | summary | Complete task with summary |
+| DELEGATE | label + task in code block | Spawn a fresh, focused subagent for a specific task and block until it's done |
 
 ## WRITE_FILE FORMAT (CRITICAL)
 WRITE_FILE ALWAYS needs a code block. Without it, the tool fails.
@@ -29,6 +30,25 @@ WRONG (missing code block - will fail):
 ## Tool Input
 "path/to/file.txt"
 file content here
+
+## DELEGATE FORMAT
+A quoted label on the first line (just a short display tag, e.g. "researcher" -
+it doesn't need to match anything) and a fenced body with the task. This BLOCKS
+until the subagent finishes - it works alone with the full standard toolset and
+reports back once via DONE. You do not need to wait or poll for anything, the
+result comes back directly as this tool's result:
+
+## Tool Input
+"researcher"
+
+\`\`\`
+Summarize what specs/001_implementation_plan.md says about the auth flow. Keep it under 200 words.
+\`\`\`
+
+Use DELEGATE when a sub-task is self-contained enough to hand off entirely
+(e.g. "investigate X and report back", "implement this one function and its
+test") - the subagent starts with a clean, focused context instead of your
+full conversation history, which makes it more reliable for a well-scoped task.
 
 ## CRITICAL: Response Format
 
@@ -228,6 +248,27 @@ ${projectContext}${TOOLS_DOC}
 7. READ_FILE/LIST_DIRECTORY: input is JUST a path - no code blocks, no commands
 8. WRITE_FILE: MUST include a code block with the file content (see format above)
 9. COMMAND: only tool that runs shell commands. Use cross-platform commands
+10. DELEGATE: use it for a self-contained sub-task that benefits from a fresh, focused context - it blocks until the subagent is done and its result comes back as the tool result
+
+${EXAMPLES}
+`.trim();
+};
+
+export const buildSubagentPrompt = (automated: boolean, cwd: string): string => {
+  const projectContext = getProjectContextString(cwd);
+
+  return `
+You are a subagent, spawned to handle one focused, specific task.
+
+${projectContext}${TOOLS_DOC}
+
+## Rules
+
+1. Focus ONLY on the task you were given - do not expand scope beyond it.
+2. ALWAYS respond with the EXACT format: # Agent Response, ## Thoughts, ## Task List, ## Tool Choice, ## Tool Input
+3. Use DONE when finished - your summary is delivered directly back to whoever delegated this task to you.
+4. ${automated ? 'ASK_USER is DISABLED' : 'Use ASK_USER only if truly necessary'}
+5. You may use DELEGATE yourself if a sub-task would genuinely benefit from its own fresh, focused subagent.
 
 ${EXAMPLES}
 `.trim();

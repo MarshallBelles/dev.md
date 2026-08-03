@@ -1,7 +1,8 @@
 export type ToolName =
   | 'LIST_DIRECTORY' | 'READ_FILE' | 'WRITE_FILE' | 'FIND_AND_REPLACE_IN_FILE'
   | 'COMMAND' | 'UPDATE_TASK_LIST' | 'ASK_USER' | 'DONE'
-  | 'READ_BACKGROUND_PROCESS' | 'LIST_BACKGROUND_PROCESSES' | 'KILL_BACKGROUND_PROCESS';
+  | 'READ_BACKGROUND_PROCESS' | 'LIST_BACKGROUND_PROCESSES' | 'KILL_BACKGROUND_PROCESS'
+  | 'DELEGATE';
 
 export interface TaskItem { status: 'pending' | 'in-progress' | 'complete'; text: string }
 
@@ -24,6 +25,7 @@ const TOOL_NAMES: ToolName[] = [
   'LIST_DIRECTORY', 'READ_FILE', 'WRITE_FILE', 'FIND_AND_REPLACE_IN_FILE',
   'COMMAND', 'UPDATE_TASK_LIST', 'ASK_USER', 'DONE',
   'READ_BACKGROUND_PROCESS', 'LIST_BACKGROUND_PROCESSES', 'KILL_BACKGROUND_PROCESS',
+  'DELEGATE',
 ];
 
 export const parseResponse = (fullResponse: string): ParsedResponse | null => {
@@ -78,13 +80,19 @@ export const parseResponse = (fullResponse: string): ParsedResponse | null => {
       }
     }
 
-    // Recognize headers - with special handling for ## Tool Choice in toolInput sections
-    // When collecting toolInput (which may contain nested code blocks), recognize ## Tool Choice
-    // as a section boundary even if fence tracking thinks we're in a code block, because
-    // the model wouldn't output "## Tool Choice" as literal content inside tool input.
+    // Recognize headers. Fence-state only gets a say inside the 'toolInput' section,
+    // where legitimate file/command content can plausibly contain literal "## ..."
+    // lines (e.g. a markdown file being written) that must NOT be misread as a real
+    // section boundary. Outside toolInput (Thoughts, Task List, Tool Choice), there's
+    // no legitimate reason for a stray/unbalanced code fence in prose to exist, so a
+    // header must always win there - otherwise a model that includes an illustrative,
+    // unclosed code snippet in its Thoughts permanently derails fence-tracking and
+    // every subsequent header (including Tool Choice/Tool Input) gets silently
+    // swallowed as thoughts text, causing a false parse failure on an otherwise
+    // well-formed response.
     const isToolChoiceHeader = line.startsWith('## Tool Choice');
     const isToolInputHeader = line.startsWith('## Tool Input');
-    const shouldRecognizeHeader = !inCodeBlock || (currentSection === 'toolInput' && (isToolChoiceHeader || isToolInputHeader));
+    const shouldRecognizeHeader = currentSection !== 'toolInput' || isToolChoiceHeader || isToolInputHeader;
 
     if (shouldRecognizeHeader) {
       if (line.startsWith('## Thoughts')) {
@@ -154,7 +162,13 @@ export const parseResponse = (fullResponse: string): ParsedResponse | null => {
 
 export const extractPath = (input: string): string => {
   const match = input.match(/^"([^"]+)"|^([^\n]+)/);
-  return (match?.[1] || match?.[2] || '').trim();
+  const raw = (match?.[1] || match?.[2] || '').trim();
+  // Defensive: a well-formed "quoted" match (group 1) never contains its quotes
+  // to begin with, so this is a no-op there. It only matters for the unquoted
+  // fallback (group 2), which - if the model opened a quote but forgot to close
+  // it (a real observed formatting slip) - would otherwise include the stray
+  // quote character verbatim, baking it into every subsequent path lookup.
+  return raw.replace(/^"+/, '').replace(/"+$/, '');
 };
 
 export const extractCodeBlock = (input: string, lang?: string): string | null => {
@@ -195,4 +209,14 @@ export const extractFindReplace = (input: string): { find: string; replace: stri
 export const extractCommandInput = (input: string): string => {
   const codeBlock = extractCodeBlock(input);
   return codeBlock !== null ? codeBlock : input;
+};
+
+// DELEGATE's input: an optional quoted label (just a display tag, not a durable
+// identity - every DELEGATE call spawns a brand new subagent) and a fenced task.
+export const extractDelegateInput = (input: string): { label: string; task: string } | null => {
+  const label = extractPath(input);
+  if (!label) return null;
+  const task = extractCodeBlock(input);
+  if (task === null) return null;
+  return { label, task };
 };
