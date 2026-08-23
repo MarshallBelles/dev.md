@@ -16,6 +16,14 @@ export const updateTokens = (count: number): void => {
 
 export const incrementTokens = (delta = 1): void => updateTokens(tokenCount + delta);
 
+// Lets callers tell whether a spinner was left running by an error path.
+export const isSpinnerActive = (): boolean => spinner !== null;
+
+// Update the label without touching the token counter - used to surface retries.
+export const setSpinnerText = (text: string): void => {
+  if (spinner) spinner.text = text;
+};
+
 export const stopSpinner = (success = true, text?: string): void => {
   if (!spinner) return;
   if (success) spinner.succeed(text || `Done ${c.dim(`[${tokenCount.toLocaleString()} tokens]`)}`);

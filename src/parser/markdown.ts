@@ -2,7 +2,7 @@ export type ToolName =
   | 'LIST_DIRECTORY' | 'READ_FILE' | 'WRITE_FILE' | 'FIND_AND_REPLACE_IN_FILE'
   | 'COMMAND' | 'UPDATE_TASK_LIST' | 'ASK_USER' | 'DONE'
   | 'READ_BACKGROUND_PROCESS' | 'LIST_BACKGROUND_PROCESSES' | 'KILL_BACKGROUND_PROCESS'
-  | 'DELEGATE';
+  | 'DELEGATE' | 'READ_MORE_OUTPUT';
 
 export interface TaskItem { status: 'pending' | 'in-progress' | 'complete'; text: string }
 
@@ -25,7 +25,7 @@ const TOOL_NAMES: ToolName[] = [
   'LIST_DIRECTORY', 'READ_FILE', 'WRITE_FILE', 'FIND_AND_REPLACE_IN_FILE',
   'COMMAND', 'UPDATE_TASK_LIST', 'ASK_USER', 'DONE',
   'READ_BACKGROUND_PROCESS', 'LIST_BACKGROUND_PROCESSES', 'KILL_BACKGROUND_PROCESS',
-  'DELEGATE',
+  'DELEGATE', 'READ_MORE_OUTPUT',
 ];
 
 export const parseResponse = (fullResponse: string): ParsedResponse | null => {

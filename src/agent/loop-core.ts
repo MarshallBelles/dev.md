@@ -2,8 +2,9 @@ import { loadConfig } from '../config/index.js';
 import { type Session, saveSession } from '../sessions/index.js';
 import { parseResponse, extractDelegateInput } from '../parser/markdown.js';
 import { executeTool, type ToolContext } from '../tools/index.js';
-import { streamCompletion } from './api.js';
-import { needsCompression, compressContext } from './compress.js';
+import { streamCompletion, isContextOverflowError } from './api.js';
+import { needsCompression, compressContext, lastIterationStart } from './compress.js';
+import { capToolOutput } from '../tools/output-store.js';
 import { runAudit } from './audit.js';
 import { displayParsed, displayResult, displayCompression, displayFinalAnswer, displayAuditStatus, displayToolExecution, isVerbose } from '../ui/display.js';
 import { c } from '../ui/colors.js';
@@ -45,9 +46,13 @@ export const runLoopTurn = async (options: LoopTurnOptions): Promise<LoopTurnRes
   // struggling model re-issues an identical action instead of moving forward.
   const recentToolSignatures: string[] = [];
   const MAX_IDENTICAL_REPEATS = 3;
+  // Compaction driven by an actual server rejection rather than our own estimate.
+  // Bounded because if compacting twice still doesn't fit, retrying won't help.
+  let overflowCompactions = 0;
+  const MAX_OVERFLOW_COMPACTIONS = 2;
 
   while (loops++ < maxLoops) {
-    if (await needsCompression(session.history)) {
+    if (await needsCompression(session.history, session)) {
       const { messages, tokensBefore, tokensAfter } = await compressContext(session, systemPrompt);
       session.history = messages;
       displayCompression(tokensBefore, tokensAfter);
@@ -56,9 +61,37 @@ export const runLoopTurn = async (options: LoopTurnOptions): Promise<LoopTurnRes
 
     let response: string;
     try {
-      response = await streamCompletion(session.history);
+      const messagesSent = session.history.length;
+      response = await streamCompletion(session.history, {
+        // Only recorded here: this is the one call that sends the loop's history.
+        onUsage: usage => {
+          session.lastPromptTokens = usage.prompt_tokens;
+          session.lastPromptMessages = messagesSent;
+        },
+      });
       session.totalTokens += getTokenCount();
     } catch (e) {
+      // The server rejected the prompt as too long. Our own estimate said it
+      // would fit, so compact on the server's authority and retry rather than
+      // re-sending the identical oversized prompt until retries run out.
+      if (isContextOverflowError(e) && overflowCompactions < MAX_OVERFLOW_COMPACTIONS) {
+        overflowCompactions++;
+        // First attempt: walk back the iteration the server just rejected, compact
+        // only the history behind it, then re-apply that iteration verbatim - it is
+        // the freshest context and summarising it away loses the most useful part.
+        // Second attempt: the tail itself is too big, so compact everything.
+        const preserveFrom = overflowCompactions === 1 ? lastIterationStart(session) : undefined;
+        console.log(c.yellow(
+          preserveFrom !== undefined
+            ? `\n  Context overflow reported by server - rewinding one iteration, compacting, and replaying it...\n`
+            : `\n  Context overflow reported by server - compacting and retrying...\n`
+        ));
+        const { messages, tokensBefore, tokensAfter } = await compressContext(session, systemPrompt, { preserveFrom });
+        session.history = messages;
+        displayCompression(tokensBefore, tokensAfter);
+        saveSession(session);
+        continue;
+      }
       console.log(c.red(`\n  API Error: ${(e as Error).message}\n`));
       if (++retries >= maxRetries) throw e;
       console.log(c.dim(`  Retrying (${retries}/${maxRetries})...\n`));
@@ -137,6 +170,10 @@ export const runLoopTurn = async (options: LoopTurnOptions): Promise<LoopTurnRes
           result = `ERROR: ${(e as Error).message}`;
         }
       }
+
+      // Cap before this enters history - an uncapped result can exceed the
+      // entire compaction reserve in a single step.
+      result = capToolOutput(tool.toolChoice, result);
 
       toolResults.push(`[${tool.toolChoice}]: ${result}`);
       displayResult(result, result.startsWith('ERROR'));

@@ -17,6 +17,11 @@ export interface Session {
   history: Message[];
   totalTokens: number;
   compressions: Compression[];
+  // The server's real prompt_tokens for the last request, and how many messages
+  // it covered. Absent when the server reports no usage, or right after
+  // compaction replaced the history. See effectiveTokens in agent/compress.ts.
+  lastPromptTokens?: number;
+  lastPromptMessages?: number;
 }
 
 const getMapPath = (): string => join(getSessionsDir(), 'directory-map.json');

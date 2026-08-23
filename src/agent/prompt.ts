@@ -14,6 +14,7 @@ export const TOOLS_DOC = `
 | ASK_USER | question | Ask user (interactive only) |
 | DONE | summary | Complete task with summary |
 | DELEGATE | label + task in code block | Spawn a fresh, focused subagent for a specific task and block until it's done |
+| READ_MORE_OUTPUT | quoted output id + chunk number | Read the next chunk of a tool result that was truncated |
 
 ## WRITE_FILE FORMAT (CRITICAL)
 WRITE_FILE ALWAYS needs a code block. Without it, the tool fails.
@@ -30,6 +31,17 @@ WRONG (missing code block - will fail):
 ## Tool Input
 "path/to/file.txt"
 file content here
+
+## TRUNCATED OUTPUT
+Large tool results are split into chunks. When a result ends with
+"[TRUNCATED] ... To continue, use READ_MORE_OUTPUT", the rest is available -
+request it only if you actually need it:
+
+## Tool Choice
+READ_MORE_OUTPUT
+
+## Tool Input
+"out_1abc" 2
 
 ## DELEGATE FORMAT
 A quoted label on the first line (just a short display tag, e.g. "researcher" -

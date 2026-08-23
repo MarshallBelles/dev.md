@@ -2,6 +2,7 @@ import { listDirectory, readFile, writeFile, findAndReplace } from './filesystem
 import { executeCommand, readBackgroundProcess, listBackgroundProcesses, killBackgroundProcess } from './command.js';
 import { askUser, updateTaskList, done } from './interaction.js';
 import { guardCommand } from './guard.js';
+import { readMoreOutput } from './output-store.js';
 import { loadConfig } from '../config/index.js';
 import { extractPath, extractCodeBlock, extractFindReplace, extractCommandInput, type ToolName } from '../parser/markdown.js';
 
@@ -61,6 +62,9 @@ export const executeTool = async (tool: ToolName, input: string, ctx: ToolContex
 
     case 'KILL_BACKGROUND_PROCESS':
       return killBackgroundProcess(path || input.trim());
+
+    case 'READ_MORE_OUTPUT':
+      return readMoreOutput(input);
 
     default:
       return `Unknown tool: ${tool}`;
