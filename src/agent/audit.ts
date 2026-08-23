@@ -2,6 +2,7 @@ import { type Session, type Message } from '../sessions/index.js';
 import { parseResponse, extractPath, extractCommandInput } from '../parser/markdown.js';
 import { buildAuditPrompt } from './prompt.js';
 import { streamCompletion } from './api.js';
+import { capToolOutput } from '../tools/output-store.js';
 import { listDirectory, readFile } from '../tools/filesystem.js';
 import { executeCommand, isAuditAllowed } from '../tools/command.js';
 import { displayParsed, displayResult } from '../ui/display.js';
@@ -84,7 +85,9 @@ export const runAudit = async (session: Session, doneSummary: string, verbose = 
     }
 
     if (verbose) displayResult(result);
-    messages.push({ role: 'user', content: `Tool result:\n${result}` });
+    // Same cap as the main loop: the audit reads files and runs commands, and an
+    // uncapped result here can overflow the window just as easily.
+    messages.push({ role: 'user', content: `Tool result:\n${capToolOutput(parsed.toolChoice, result)}` });
   }
 
   // Ran out of iterations without ever reaching a clear verdict - fail closed rather

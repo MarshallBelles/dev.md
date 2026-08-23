@@ -30,6 +30,10 @@ export interface ConfigOverrides {
   commandGuardLLM?: boolean;
   maxDelegateDepth?: number;
   subagentMaxLoops?: number;
+  maxToolOutputTokens?: number;
+  requestTimeout?: number;
+  maxApiRetries?: number;
+  apiRetryWindow?: number;
 }
 
 export const createTestContext = (port: number, overrides: ConfigOverrides = {}): TestContext => {

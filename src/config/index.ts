@@ -21,6 +21,16 @@ export interface Config {
   commandGuardLLM: boolean;
   maxDelegateDepth: number;
   subagentMaxLoops: number;
+  // Cap on a single tool result before it is chunked into the output store.
+  // Prevents one large READ_FILE/COMMAND from consuming the compaction reserve.
+  maxToolOutputTokens?: number;
+  // Per-attempt API request timeout, in seconds. Without one, an endpoint that
+  // accepts the connection but never responds hangs the agent forever.
+  requestTimeout?: number;
+  // How many times to retry a failed/timed-out API request, and the total wall
+  // clock budget for those retries in seconds.
+  maxApiRetries?: number;
+  apiRetryWindow?: number;
 }
 
 // Used only when the config pins no value AND the server publishes no context
@@ -56,6 +66,13 @@ const DEFAULTS: Config = {
   // Loop budget granted to a subagent - smaller than the top-level default so
   // one bad delegation can't consume the whole run.
   subagentMaxLoops: 15,
+  // Roughly a quarter of a 131K window - big enough that ordinary file reads and
+  // command output are never chunked, small enough that one result cannot eat
+  // the headroom compaction relies on.
+  maxToolOutputTokens: 25000,
+  requestTimeout: 120,
+  maxApiRetries: 10,
+  apiRetryWindow: 300,
 };
 
 export const getConfigDir = (): string => {
@@ -80,7 +97,10 @@ export const loadConfig = (): Config => {
   ensureDirs();
   const path = getConfigPath();
   if (!existsSync(path)) {
-    writeFileSync(path, JSON.stringify(DEFAULTS, null, 2));
+    // Deliberately does NOT write the file. Creating it here would make
+    // configExists() true on the first incidental read, so first-time setup
+    // would never run again and the user would be silently left pointing at the
+    // default localhost endpoint - which then fails as an opaque API error.
     return { ...DEFAULTS };
   }
   try {
