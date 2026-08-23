@@ -11,7 +11,8 @@ import { runAgentLoop } from './agent/loop.js';
 import { displayWelcome, displaySessionInfo, setVerboseMode } from './ui/display.js';
 import { c } from './ui/colors.js';
 import { EnhancedInput } from './ui/input.js';
-import { setThinking } from './ui/thinking.js';
+import { setThinking, toggleThinking, isThinkingEnabled } from './ui/thinking.js';
+import { resolveCommand, COMMANDS } from './ui/commands.js';
 
 const cwd = process.cwd();
 
@@ -129,20 +130,61 @@ async function interactiveMode(session: ReturnType<typeof createSession>) {
     const text = await input.getInput();
     if (!text) continue;
 
-    const cmd = text.toLowerCase().trim();
-    if (cmd === 'exit' || cmd === 'quit') {
-      console.log(c.dim('\n  Goodbye!\n'));
-      input.close();
-      break;
+    // Slash commands (and the bare legacy forms: exit/quit/new/help/?).
+    const command = resolveCommand(text);
+    if (command) {
+      if (command.name === 'exit') {
+        console.log(c.dim('\n  Goodbye!\n'));
+        input.close();
+        break;
+      }
+      if (command.name === 'new') {
+        session = createSession(cwd, '');
+        displaySessionInfo(session.id);
+        console.log(c.dim('  Started new session\n'));
+        continue;
+      }
+      if (command.name === 'help') {
+        input.showHelp();
+        continue;
+      }
+      if (command.name === 'think') {
+        toggleThinking();
+        console.log(`  ${c.yellow('Thinking mode:')} ${isThinkingEnabled() ? c.green('ON') : c.red('OFF')}\n`);
+        continue;
+      }
+      if (command.name === 'config') {
+        openConfigInEditor();
+        console.log(c.dim('  Opened config in your editor\n'));
+        continue;
+      }
+      if (command.name === 'sessions') {
+        // listSessions() returns every session; narrow to this directory.
+        const all = listSessions().filter(s => s.workingDirectory === cwd);
+        if (!all.length) console.log(c.dim('  No sessions yet\n'));
+        else {
+          console.log('');
+          for (const s of all.slice(0, 10)) {
+            console.log(`  ${c.dim(s.id.slice(0, 8))}  ${s.updatedAt.slice(0, 19).replace('T', ' ')}  ${c.dim((s.originalPrompt || '(no prompt)').slice(0, 50))}`);
+          }
+          console.log('');
+        }
+        continue;
+      }
+      if (command.name === 'status') {
+        displaySessionInfo(session.id);
+        console.log(`  ${c.dim('Tokens this session:')} ${session.totalTokens.toLocaleString()}`);
+        console.log(`  ${c.dim('Compactions:')} ${session.compressions.length}`);
+        console.log(`  ${c.dim('Thinking mode:')} ${isThinkingEnabled() ? 'ON' : 'OFF'}\n`);
+        continue;
+      }
     }
-    if (cmd === 'new') {
-      session = createSession(cwd, '');
-      displaySessionInfo(session.id);
-      console.log(c.dim('  Started new session\n'));
-      continue;
-    }
-    if (cmd === 'help' || cmd === '?') {
-      input.showHelp();
+
+    // An unrecognised slash command is a typo, not a prompt - saying so beats
+    // silently sending "/exti" to the model as a task.
+    if (text.trim().startsWith('/')) {
+      console.log(c.yellow(`  Unknown command: ${text.trim()}`));
+      console.log(c.dim(`  Available: ${COMMANDS.map(cm => '/' + cm.name).join(', ')}\n`));
       continue;
     }
 
