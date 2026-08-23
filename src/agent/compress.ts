@@ -1,4 +1,4 @@
-import { loadConfig } from '../config/index.js';
+import { loadConfig, resolveMaxContextTokens } from '../config/index.js';
 import { estimateTokens, type Message, type Session } from '../sessions/index.js';
 import { COMPRESSION_PROMPT } from './prompt.js';
 import { streamCompletion } from './api.js';
@@ -6,9 +6,14 @@ import { streamCompletion } from './api.js';
 // Reserve 10K tokens for automatic compaction
 const COMPACTION_RESERVE = 10000;
 
-export const needsCompression = (messages: Message[]): boolean => {
+export const needsCompression = async (messages: Message[]): Promise<boolean> => {
   const config = loadConfig();
-  const threshold = config.maxContextTokens - COMPACTION_RESERVE;
+  const maxContextTokens = await resolveMaxContextTokens(config);
+  // maxContextTokens is the server's *total* budget - prompt plus completion - so
+  // the reply we're about to request has to be subtracted alongside the compaction
+  // reserve. Omitting maxTokens here lets the prompt grow until prompt+output
+  // overflows the window and the server rejects the request outright.
+  const threshold = Math.max(1, maxContextTokens - COMPACTION_RESERVE - config.maxTokens);
   return estimateTokens(messages) >= threshold;
 };
 

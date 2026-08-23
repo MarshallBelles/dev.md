@@ -53,13 +53,19 @@ Run the setup wizard to configure your API endpoint:
 dev setup
 ```
 
-This creates `~/.dev-md/config.json` with:
+This writes a config file to a platform-specific location:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/dev-agent/config.json` |
+| Linux | `~/.dev-agent/config.json` |
+| Windows | `%APPDATA%\dev-agent\config.json` |
+
 ```json
 {
   "apiUrl": "http://localhost:8000/v1",
   "apiKey": "your-api-key",
   "model": "gpt-4",
-  "maxContextTokens": 200000,
   "commandTimeout": 30,
   "maxRetries": 3,
   "maxLoops": 1000,
@@ -68,6 +74,26 @@ This creates `~/.dev-md/config.json` with:
 ```
 
 Works with any OpenAI-compatible API (OpenAI, Anthropic via proxy, vLLM, ollama, etc).
+
+### Context Length
+
+`maxContextTokens` is optional and normally omitted. When it is absent, dev.md
+resolves the context window in this order:
+
+1. **The config value**, if you set one explicitly.
+2. **`max_model_len` from `GET /v1/models`**, if the server publishes it. This is a
+   vLLM extension — the OpenAI spec only requires a model to report
+   `id`, `object`, `created`, and `owned_by`, so many servers won't have it.
+3. **131072**, as a fallback.
+
+Detection is best-effort and cached per endpoint+model for the life of the process;
+an unreachable server or a missing `/models` route falls through to the fallback
+rather than failing the run.
+
+Set the value explicitly only when you need to override the server — for example to
+cap memory use on a long-context model. Note that it is a **total** budget covering
+prompt *and* completion, so setting it higher than the server's real limit will
+cause requests to be rejected once a session grows.
 
 ## Usage
 
