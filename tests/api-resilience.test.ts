@@ -129,6 +129,34 @@ describe('API resilience', () => {
       assert.equal(hits, 1);
     });
 
+    it('does NOT abort a slow but healthy stream', async () => {
+      // Regression: a total-duration timeout would kill a long generation
+      // mid-flight, and because tokens had already been emitted it could not be
+      // retried either - the whole response was lost. The watchdog must only
+      // fire on a genuine stall, so a stream that keeps trickling survives well
+      // past the per-attempt timeout.
+      await listen((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        let n = 0;
+        const tick = setInterval(() => {
+          if (n < 6) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x' } }] })}\n\n`);
+            n++;
+          } else {
+            clearInterval(tick);
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+        }, 400); // 6 chunks over ~2.4s, each gap under the 1s stall timeout
+      });
+      ctx = createInProcessTestContext(TEST_PORT, {
+        requestTimeout: 1, maxApiRetries: 2, apiRetryWindow: 30,
+      });
+
+      const out = await streamCompletion([{ role: 'user', content: 'hi' }], { silent: true });
+      assert.equal(out, 'xxxxxx', 'every chunk should arrive despite total time exceeding the timeout');
+    });
+
     it('times out a server that accepts but never responds', async () => {
       await listen(() => { /* never replies */ });
       ctx = createInProcessTestContext(TEST_PORT, {
