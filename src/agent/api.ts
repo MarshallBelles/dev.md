@@ -1,4 +1,4 @@
-import { loadConfig } from '../config/index.js';
+import { loadConfig, resolveMaxContextTokens } from '../config/index.js';
 import { type Message, estimateTokens } from '../sessions/index.js';
 import { startSpinner, incrementTokens, stopSpinner } from '../ui/spinner.js';
 
@@ -14,10 +14,11 @@ const TOKEN_ESTIMATE_SAFETY_MARGIN = 1000;
 
 // Calculate max output tokens: normally config.maxTokens (a sane single-response
 // budget), clamped down if the context window is close to full.
-const calcMaxTokens = (messages: Message[]): number => {
+const calcMaxTokens = async (messages: Message[]): Promise<number> => {
   const config = loadConfig();
+  const maxContextTokens = await resolveMaxContextTokens(config);
   const promptTokens = estimateTokens(messages);
-  const remaining = config.maxContextTokens - promptTokens - TOKEN_ESTIMATE_SAFETY_MARGIN;
+  const remaining = maxContextTokens - promptTokens - TOKEN_ESTIMATE_SAFETY_MARGIN;
   return Math.max(1, Math.min(config.maxTokens, remaining));
 };
 
@@ -34,7 +35,7 @@ export const streamCompletion = async (
     model: config.model,
     messages: messages.map(m => ({ role: m.role, content: m.content })),
     stream: true,
-    max_tokens: calcMaxTokens(messages),
+    max_tokens: await calcMaxTokens(messages),
   };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

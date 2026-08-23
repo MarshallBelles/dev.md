@@ -61,6 +61,16 @@ export class MockAPIServer extends EventEmitter {
   private requestCount = 0;
   public port = 18765;
   public requests: any[][] = [];
+  // Controls what GET /v1/models returns, so tests can cover a server that
+  // publishes max_model_len, one that omits it, and one with no /models route.
+  //   object  -> served as the JSON body
+  //   'off'   -> route returns 404, as if the server doesn't implement it
+  public modelsPayload: object | 'off' = {
+    object: 'list',
+    data: [{ id: 'test-model', object: 'model', created: 0, owned_by: 'mock' }],
+  };
+  // Counts probe hits so tests can assert the result is cached, not re-fetched.
+  public modelsRequestCount = 0;
 
   constructor(generator: ResponseGenerator) {
     super();
@@ -76,6 +86,17 @@ export class MockAPIServer extends EventEmitter {
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.server = createServer(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/v1/models') {
+          this.modelsRequestCount++;
+          if (this.modelsPayload === 'off') {
+            res.writeHead(404);
+            res.end('Not found');
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(this.modelsPayload));
+          return;
+        }
         if (req.method === 'POST' && req.url === '/v1/chat/completions') {
           let body = '';
           req.on('data', chunk => body += chunk);
@@ -118,6 +139,7 @@ export class MockAPIServer extends EventEmitter {
   reset() {
     this.requestCount = 0;
     this.requests = [];
+    this.modelsRequestCount = 0;
   }
 }
 

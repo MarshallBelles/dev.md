@@ -47,7 +47,7 @@ export const runLoopTurn = async (options: LoopTurnOptions): Promise<LoopTurnRes
   const MAX_IDENTICAL_REPEATS = 3;
 
   while (loops++ < maxLoops) {
-    if (needsCompression(session.history)) {
+    if (await needsCompression(session.history)) {
       const { messages, tokensBefore, tokensAfter } = await compressContext(session, systemPrompt);
       session.history = messages;
       displayCompression(tokensBefore, tokensAfter);
