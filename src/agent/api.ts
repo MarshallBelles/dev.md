@@ -109,12 +109,27 @@ export const streamCompletion = async (
       let contentEmitted = false;
       fullContent = '';
 
+      // A stall watchdog, not a total-duration cap. AbortSignal.timeout would
+      // abort the whole fetch including the response stream, so a long but
+      // perfectly healthy generation would be killed mid-flight - and because
+      // tokens had already been emitted it could not be safely retried either.
+      // Instead the timer is reset every time data arrives, so it only fires
+      // when the server has genuinely gone quiet.
+      const controller = new AbortController();
+      let stallTimer: ReturnType<typeof setTimeout> | undefined;
+      const armStall = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => controller.abort(), timeoutMs);
+      };
+      const disarmStall = () => { if (stallTimer) clearTimeout(stallTimer); stallTimer = undefined; };
+
       try {
+        armStall();
         const response = await fetch(`${config.apiUrl}/chat/completions`, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -132,6 +147,7 @@ export const streamCompletion = async (
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            armStall(); // data is flowing - push the deadline out
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
@@ -167,6 +183,8 @@ export const streamCompletion = async (
         if (contentEmitted) throw e;                 // mid-stream: cannot replay
         if (!isRetryableNetworkError(e)) throw e;    // permanent: surface it now
         lastError = e;
+      } finally {
+        disarmStall();
       }
 
       // Out of attempts, or the next backoff would exceed the retry window.
