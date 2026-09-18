@@ -66,6 +66,12 @@ export const runSubagent = async (
     return errorMsg;
   }
 
+  if (result.type === 'aborted') {
+    const errorMsg = `ERROR: Subagent "${label}" was aborted.`;
+    displaySubagentReply(label, errorMsg);
+    return errorMsg;
+  }
+
   displaySubagentReply(label, result.summary);
   return result.summary;
 };

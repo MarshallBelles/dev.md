@@ -1,5 +1,5 @@
-import { loadConfig, resolveMaxContextTokens } from '../config/index.js';
-import { estimateTokens, type Message, type Session } from '../sessions/index.js';
+import { loadConfig, resolveMaxContextTokens, type Config } from '../config/index.js';
+import { type Message, type Session, estimateTokens } from '../sessions/index.js';
 import { COMPRESSION_PROMPT } from './prompt.js';
 import { streamCompletion, isContextOverflowError } from './api.js';
 
@@ -41,14 +41,17 @@ export const effectiveTokens = (messages: Message[], session?: Session): number 
 // The prompt size at which compaction must fire. maxContextTokens is the server's
 // *total* budget - prompt plus completion - so the reply we're about to request
 // has to be subtracted alongside the compaction reserve.
-export const getCompactionThreshold = async (): Promise<number> => {
-  const config = loadConfig();
+export const getCompactionThreshold = async (config: Config = loadConfig()): Promise<number> => {
   const maxContextTokens = await resolveMaxContextTokens(config);
   return Math.max(1, maxContextTokens - COMPACTION_RESERVE - config.maxTokens);
 };
 
-export const needsCompression = async (messages: Message[], session?: Session): Promise<boolean> => {
-  const threshold = await getCompactionThreshold();
+export const needsCompression = async (
+  messages: Message[],
+  session?: Session,
+  config: Config = loadConfig()
+): Promise<boolean> => {
+  const threshold = await getCompactionThreshold(config);
   return effectiveTokens(messages, session) >= threshold;
 };
 
@@ -98,6 +101,10 @@ export interface CompressOptions {
   // before. Used to walk back one iteration after a context overflow so the
   // freshest turn survives compaction instead of being summarised away.
   preserveFrom?: number;
+  // Inline config override (library/instance runs). When omitted, loadConfig()
+  // is used, preserving the file-backed CLI behaviour. Loop core resolves this
+  // into a complete Config before passing it in.
+  config?: Config;
 }
 
 export const compressContext = async (
@@ -106,7 +113,7 @@ export const compressContext = async (
   options: CompressOptions = {}
 ): Promise<{ messages: Message[]; tokensBefore: number; tokensAfter: number }> => {
   const tokensBefore = estimateTokens(session.history);
-  const config = loadConfig();
+  const config = options.config ?? loadConfig();
   const maxContextTokens = await resolveMaxContextTokens(config);
 
   const { preserveFrom } = options;

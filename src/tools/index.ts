@@ -1,72 +1,35 @@
-import { listDirectory, readFile, writeFile, findAndReplace } from './filesystem.js';
-import { executeCommand, readBackgroundProcess, listBackgroundProcesses, killBackgroundProcess } from './command.js';
-import { askUser, updateTaskList, done } from './interaction.js';
-import { guardCommand } from './guard.js';
-import { readMoreOutput } from './output-store.js';
-import { loadConfig } from '../config/index.js';
-import { extractPath, extractCodeBlock, extractFindReplace, extractCommandInput, type ToolName } from '../parser/markdown.js';
+import { createRegistry, type ToolRegistry } from './registry.js';
+import { buildDefaultRegistry } from './adapters.js';
+import { runGuardedCommand } from './guard-tool.js';
+import type { ToolInvocationContext } from './adapter.js';
+import type { ToolName } from '../parser/markdown.js';
 
-export interface ToolContext {
-  cwd: string;
-  automated: boolean;
-}
+export { runGuardedCommand } from './guard-tool.js';
+export type { GuardConfig } from './guard.js';
+// Single source of truth for the per-run tool context (cwd + automated + guard
+// config) lives in adapter.js; ToolContext is the engine-facing alias.
+export type ToolContext = ToolInvocationContext;
+export type { ToolInvocationContext } from './adapter.js';
 
+// The default, file-backed registry. Governance (Phase 2) swaps this for a
+// wrapped registry that authorizes/approves/audits before each execute().
+let registry: ToolRegistry = buildDefaultRegistry();
+
+/** The currently active tool registry. */
+export const getRegistry = (): ToolRegistry => registry;
+
+/** Replace the active registry (used to inject governance wrappers). */
+export const setRegistry = (next: ToolRegistry): void => { registry = next; };
+
+export type { ToolAdapter } from './adapter.js';
+
+/**
+ * Resolve a tool by name from the active registry and execute it. This is the
+ * single choke-point the engine calls; governance wraps the registry so every
+ * surface (CLI, remote, embedded) enforces the same policy.
+ */
 export const executeTool = async (tool: ToolName, input: string, ctx: ToolContext): Promise<string> => {
-  const path = extractPath(input);
-
-  switch (tool) {
-    case 'LIST_DIRECTORY':
-      return await listDirectory(path, ctx.cwd);
-
-    case 'READ_FILE':
-      return readFile(path, ctx.cwd);
-
-    case 'WRITE_FILE': {
-      const content = extractCodeBlock(input);
-      if (!content) return 'ERROR: No code block found for WRITE_FILE';
-      return writeFile(path, content, ctx.cwd);
-    }
-
-    case 'FIND_AND_REPLACE_IN_FILE': {
-      const fr = extractFindReplace(input);
-      if (!fr) return 'ERROR: Missing find/replace code blocks';
-      return findAndReplace(path, fr.find, fr.replace, ctx.cwd);
-    }
-
-    case 'COMMAND': {
-      const cmd = extractCommandInput(input);
-      const config = loadConfig();
-      const guard = await guardCommand(cmd, ctx.cwd, config);
-      if (guard.blocked) {
-        return `ERROR: Command permanently blocked by safety guard: ${guard.reason || 'unsafe command'}. ` +
-          `Do NOT retry this command or attempt an alternate path to the same file/action (e.g. a different absolute path, sudo, or searching the filesystem for it) - it will be blocked again every time. ` +
-          `This is not a transient error. Stop pursuing this action and use DONE to report the limitation to the user.`;
-      }
-      return await executeCommand(cmd, ctx.cwd);
-    }
-
-    case 'UPDATE_TASK_LIST':
-      return updateTaskList();
-
-    case 'ASK_USER':
-      return await askUser(input, ctx.automated);
-
-    case 'DONE':
-      return done(input);
-
-    case 'READ_BACKGROUND_PROCESS':
-      return readBackgroundProcess(path || input.trim());
-
-    case 'LIST_BACKGROUND_PROCESSES':
-      return listBackgroundProcesses();
-
-    case 'KILL_BACKGROUND_PROCESS':
-      return killBackgroundProcess(path || input.trim());
-
-    case 'READ_MORE_OUTPUT':
-      return readMoreOutput(input);
-
-    default:
-      return `Unknown tool: ${tool}`;
-  }
+  const adapter = registry.get(tool);
+  if (!adapter) return `Unknown tool: ${tool}`;
+  return adapter.execute({ input, ctx });
 };

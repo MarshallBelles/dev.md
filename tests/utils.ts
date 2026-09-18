@@ -28,6 +28,11 @@ export interface ConfigOverrides {
   maxTokens?: number;
   commandGuardEnabled?: boolean;
   commandGuardLLM?: boolean;
+  commandClassifierEnabled?: boolean;
+  commandClassifierTriggerScore?: number;
+  riskThreshold?: number;
+  commandClassifierCacheTtlMs?: number;
+  commandClassifierTools?: string[];
   maxDelegateDepth?: number;
   subagentMaxLoops?: number;
   maxToolOutputTokens?: number;
@@ -56,6 +61,10 @@ export const createTestContext = (port: number, overrides: ConfigOverrides = {})
     maxRetriesAutomated: 3,
     maxLoops: 50,
     sessionRetentionDays: 30,
+    // Test baseline: classifier OFF. Existing tests were written against the
+    // denylist+risk-backstop only; the dedicated Command Guard suite re-enables
+    // the classifier to cover the LLM-judgement path.
+    commandClassifierEnabled: false,
     ...overrides,
   };
   writeFileSync(join(configDir, 'config.json'), JSON.stringify(config, null, 2));

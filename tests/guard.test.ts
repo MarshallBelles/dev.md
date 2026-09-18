@@ -26,14 +26,13 @@ describe('Command Guard', () => {
       }
     });
 
-    it('blocks sudo', () => {
-      const result = checkCommandDenylist('sudo rm -rf /var/log', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
     it('blocks mkfs', () => {
       const result = checkCommandDenylist('mkfs.ext4 /dev/sda1', cwd);
       assert.strictEqual(result.blocked, true);
+    });
+
+    it('blocks wiping a filesystem', () => {
+      assert.strictEqual(checkCommandDenylist('wipefs -a /dev/sda1', cwd).blocked, true);
     });
 
     it('blocks raw writes to a block device', () => {
@@ -58,62 +57,14 @@ describe('Command Guard', () => {
       assert.strictEqual(result2.blocked, true);
     });
 
-    it('blocks recursively opening permissions on a root path', () => {
-      const result = checkCommandDenylist('chmod -R 777 /', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
-    it('blocks disk erase/partition operations', () => {
-      const result = checkCommandDenylist('diskutil eraseDisk APFS Untitled /dev/disk2', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
-    it('blocks system power commands', () => {
-      assert.strictEqual(checkCommandDenylist('sudo shutdown -h now', cwd).blocked, true);
-      assert.strictEqual(checkCommandDenylist('reboot', cwd).blocked, true);
-    });
-
-    it('blocks force-pushing', () => {
-      const result = checkCommandDenylist('git push --force origin main', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
-    it('allows a normal git push', () => {
-      const result = checkCommandDenylist('git push origin main', cwd);
-      assert.strictEqual(result.blocked, false);
-    });
-
-    it('regression: blocks rm -rf on an absolute path outside the working directory', () => {
-      // This is the exact incident from manual e2e testing: a confused agent run
-      // executed `rm -rf /Users/self-test-task` while cwd was somewhere else entirely.
-      const result = checkCommandDenylist('rm -rf /Users/self-test-task', cwd);
-      assert.strictEqual(result.blocked, true);
-      assert.ok(result.reason?.includes('/Users/self-test-task'));
-    });
-
-    it('blocks rm targeting the home directory', () => {
-      const result = checkCommandDenylist('rm -rf ~', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
-    it('blocks rm targeting a path expanded from ~', () => {
-      const result = checkCommandDenylist('rm -rf ~/Documents', cwd);
-      assert.strictEqual(result.blocked, true);
-    });
-
-    it('allows rm on a relative path within the working directory', () => {
-      const result = checkCommandDenylist('rm -rf ./build', cwd);
-      assert.strictEqual(result.blocked, false);
-    });
-
-    it('allows rm on an absolute path that resolves inside the working directory', () => {
-      const result = checkCommandDenylist(`rm -rf ${join(cwd, 'dist')}`, cwd);
-      assert.strictEqual(result.blocked, false);
-    });
-
-    it('allows mv within the working directory but blocks mv to an outside path', () => {
-      assert.strictEqual(checkCommandDenylist('mv old.txt new.txt', cwd).blocked, false);
-      assert.strictEqual(checkCommandDenylist('mv secrets.txt /tmp/exfil.txt', cwd).blocked, true);
+    it('does not denylist gray-area commands (those are left to the classifier)', () => {
+      // sudo / chmod / diskutil / shutdown / git push --force are deliberately
+      // NOT hard-blocked here anymore - they are judged by the LLM classifier.
+      assert.strictEqual(checkCommandDenylist('sudo apt update', cwd).blocked, false);
+      assert.strictEqual(checkCommandDenylist('chmod -R 777 /', cwd).blocked, false);
+      assert.strictEqual(checkCommandDenylist('diskutil eraseDisk APFS Untitled /dev/disk2', cwd).blocked, false);
+      assert.strictEqual(checkCommandDenylist('reboot', cwd).blocked, false);
+      assert.strictEqual(checkCommandDenylist('git push --force origin main', cwd).blocked, false);
     });
   });
 

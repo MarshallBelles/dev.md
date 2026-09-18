@@ -18,7 +18,20 @@ export interface Config {
   sessionRetentionDays: number;
   maxTokens: number;
   commandGuardEnabled: boolean;
+  // Optional LLM classifier for COMMAND (second opinion over the denylist).
+  // Left OFF by default: it adds one API call per risky command. commandGuardLLM
+  // is kept as a backward-compatible alias for commandClassifierEnabled.
+  commandClassifierEnabled: boolean;
   commandGuardLLM: boolean;
+  // Risk score at/above which the classifier is invoked (benign commands skip
+  // it entirely), and the risk score at/above which a command is deterministically
+  // blocked (the risk backstop). See command-classifier/.
+  commandClassifierTriggerScore: number;
+  riskThreshold: number;
+  // How long a classifier verdict stays cached, and which tools the classifier
+  // applies to (COMMAND today; extensible to other mutating tools later).
+  commandClassifierCacheTtlMs: number;
+  commandClassifierTools: string[];
   maxDelegateDepth: number;
   subagentMaxLoops: number;
   // Cap on a single tool result before it is chunked into the output store.
@@ -37,6 +50,52 @@ export interface Config {
 // length. The OpenAI spec does not require a model to advertise its context
 // window - the Model object is only required to carry id/object/created/owned_by -
 // so this fallback is load-bearing for any server that doesn't extend the schema.
+
+/**
+ * Inline configuration for a library/instance run. Every field is optional and
+ * is merged over the built-in defaults via {@link mergeDefaults}. When supplied,
+ * no config file is read or written - the agent is fully hermetic with respect
+ * to configuration, which is what lets an embedded host point the engine at its
+ * own endpoint without touching ~/.dev-md or the process environment.
+ */
+export interface InlineConfig {
+  apiUrl?: string;
+  apiKey?: string;
+  model?: string;
+  maxContextTokens?: number;
+  commandTimeout?: number;
+  maxRetries?: number;
+  maxRetriesAutomated?: number;
+  maxLoops?: number;
+  sessionRetentionDays?: number;
+  maxTokens?: number;
+  commandGuardEnabled?: boolean;
+  commandClassifierEnabled?: boolean;
+  commandGuardLLM?: boolean;
+  commandClassifierTriggerScore?: number;
+  riskThreshold?: number;
+  commandClassifierCacheTtlMs?: number;
+  commandClassifierTools?: string[];
+  maxDelegateDepth?: number;
+  subagentMaxLoops?: number;
+  maxToolOutputTokens?: number;
+  requestTimeout?: number;
+  maxApiRetries?: number;
+  apiRetryWindow?: number;
+}
+
+/** Merge inline overrides over the built-in defaults (no file reads). */
+export const mergeDefaults = (overrides: InlineConfig = {}): InlineConfig => ({ ...DEFAULTS, ...overrides });
+
+/**
+ * Resolve a full, populated config from inline overrides. Used by library runs
+ * (and compression) so a partial {@link InlineConfig} is completed with the
+ * built-in defaults before being handed to the engine. A resolved config is
+ * always a complete {@link Config}; the file-backed {@link loadConfig} path is
+ * left untouched for the CLI.
+ */
+export const resolveConfig = (overrides: InlineConfig = {}): Config => ({ ...DEFAULTS, ...overrides }) as Config;
+
 export const FALLBACK_MAX_CONTEXT_TOKENS = 131072;
 
 // How long to wait on the /models probe before giving up and using the fallback.
@@ -57,9 +116,19 @@ const DEFAULTS: Config = {
   maxTokens: 4096,
   // Deterministic denylist for the COMMAND tool - cheap, always on by default.
   commandGuardEnabled: true,
-  // Optional LLM second-opinion classifier for commands the denylist doesn't already
-  // block - off by default since it adds a real API call per COMMAND invocation.
+  // LLM second-opinion classifier for gray-area commands (sudo, chmod, git push,
+  // scoped rm, etc.). ON by default: it judges risky commands and lets the agent
+  // keep going after a decline. Disable per-run with the CLI's --yolo flag, which
+  // turns the whole guard off and auto-approves every command.
+  commandClassifierEnabled: true,
   commandGuardLLM: false,
+  // Trigger at/above which the classifier is consulted and the deterministic
+  // risk backstop. Genuinely benign commands (risk 0) skip the classifier.
+  commandClassifierTriggerScore: 25,
+  riskThreshold: 75,
+  // Short-lived classifier cache (verdicts are stable per command within a run).
+  commandClassifierCacheTtlMs: 30000,
+  commandClassifierTools: ['COMMAND'],
   // Caps nested DELEGATE recursion (a subagent delegating to its own subagent,
   // and so on) - a couple of levels is fine, unbounded nesting is not.
   maxDelegateDepth: 4,
