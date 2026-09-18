@@ -1,8 +1,40 @@
 # dev-md
 
-A CLI agent that uses markdown formatting for tool calls. Works with any OpenAI-compatible API.
+A markdown-native AI agent that uses markdown formatting for tool calls. Works with any OpenAI-compatible API. Use it as a CLI, or embed and extend the same agent core in your own app.
 
-> ⚠️ **Security Note:** dev.md executes commands and modifies files based on AI model output. Only run it in directories you trust. Config stored at `~/.dev-md/config.json`.
+## Use it as a library
+
+dev-md ships a small, well-typed agent core you can embed directly in a Node.js app, or import from `dev-md/lib` when the package is installed as a dependency:
+
+```js
+import { createAgent } from 'dev-md/lib';
+
+const agent = createAgent({
+  config: {
+    apiUrl: 'http://carrier.local:8007/v1', // any OpenAI-compatible endpoint
+    apiKey: 'your-api-key',
+    model: 'mars',
+  },
+});
+
+// React to tool calls as they happen (optional)
+agent.events.on('tool', ({ tool, input }) => console.log('chosen:', tool, input));
+
+// Run a one-shot prompt and get back a structured result
+const result = await agent.run({ prompt: 'Create a file hello.txt containing "Hello, world!"' });
+console.log('status:', result.status);
+
+// Or drive an interactive session and stop it when you're done
+const session = createAgent({ config: { apiUrl: '...', model: 'mars' } });
+await session.run({ prompt: 'Debug why the login endpoint returns 500' });
+session.stop();
+```
+
+`createAgent` returns an `Agent` with `.run()` / `.resume(sessionId)`, an `EventEmitter` (`tool`, `message`, `error`, `done`, `step`, `token` events), an `AbortSignal` to cancel mid-flight, and a pluggable `sink` (console or a capture buffer). The full `AgentOptions` surface (`sink`, `store`, `answer`, `onToolCall`, `onDelegate`, `thinking`, `automated`, …) lives in `src/lib`. The same core also powers the `dev` CLI, so an embedded agent behaves exactly like the command-line version.
+
+## Safety
+
+Every command the agent runs is judged before it executes. dev-md keeps a tiny denylist for commands that would irreversibly tank a system (fork bombs, filesystem formatting, raw block-device writes, piping a downloaded script straight into a shell), and a cheap risk heuristic that hard-blocks anything carrying a very high-confidence catastrophic signal. Gray-area commands — `sudo`, `chmod`, `git push --force`, scoped `rm`/`mv`, credential access, and obfuscated variants of the above — are handed to an LLM **safety classifier**. The classifier reads the command and decides approve or decline; on a decline it tells the agent to try a different tool or approach (it never freezes the session waiting for a human), then the agent keeps working. The classifier can be turned off entirely with the CLI's `--yolo` flag, which disables the guard and auto-approves every command.
 
 ## Key Features
 
@@ -117,21 +149,16 @@ dev
 -t, --think           Enable thinking/reflection mode
 --resume              Resume last session in this directory
 --session <uuid>      Resume a specific session
+-y, --yolo            Disable the safety guard and auto-approve every command (trust mode)
 ```
+
+By default the safety classifier is **on**: gray-area commands are judged by the LLM and the agent keeps working after a decline. Pass `-y`/`--yolo` to turn the guard off entirely (no classifier, denylist, or risk backstop) and auto-approve every command — only use this where you fully trust the environment.
 
 ### Session Commands
 ```bash
 dev sessions list     # List all sessions
 dev config            # Open config in editor
 ```
-
-## Security Considerations
-
-- **Full system access**: The agent can read, write, and execute commands on your machine
-- Only run in directories you trust
-- Review the agent's task list before it executes
-- API keys are stored in plain text in `~/.dev-md/config.json`
-- Consider running in a container or VM for untrusted tasks
 
 ## License
 

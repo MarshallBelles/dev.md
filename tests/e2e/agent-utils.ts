@@ -19,8 +19,18 @@ export const createAgentTestContext = (overrides: ConfigOverrides = {}): TestCon
   ...overrides,
 });
 
-// Automated-mode runs default to verbose output, which prints a box titled
-// "Tool: <NAME>" for every tool call the model makes. This lets assertions check
-// which tools a *real* model actually chose, independent of its paraphrased wording.
-export const usedTool = (stdout: string, toolName: string): boolean =>
-  stdout.includes(`Tool: ${toolName}`);
+// Automated-mode runs print each executed tool in compact mode as a line like
+// "  ⚡ <TOOL_NAME> <input>". Match that live execution marker (ANSI codes stripped)
+// so assertions verify which tools a *real* model actually chose, independent of
+// its paraphrased wording. The old "Tool: <NAME>" preview format is no longer
+// emitted at runtime.
+const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, '');
+export const usedTool = (stdout: string, toolName: string): boolean => {
+  const clean = stripAnsi(stdout);
+  return new RegExp(`(^|\\s)⚡\\s+${toolName}(?:\\s|$)`).test(clean);
+};
+
+// The Command Guard suite pays for a real LLM classifier call on every COMMAND
+// and the model can loop trying alternate ways to satisfy a blocked request, so
+// it needs a far more generous CLI deadline than the other agent tests.
+export const COMMAND_GUARD_CLI_TIMEOUT_MS = 420000;

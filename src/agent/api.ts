@@ -15,6 +15,9 @@ interface StreamOptions {
   // main agent loop should record this - audit/compression/subagent calls send
   // different message sets and would otherwise clobber the loop's baseline.
   onUsage?: (usage: CompletionUsage) => void;
+  // Optional host signal that aborts an in-flight request (e.g. a run being
+  // cancelled). Combined with the stall watchdog below.
+  signal?: AbortSignal;
 }
 
 // Recognises the server's "prompt is too long" rejection so the caller can
@@ -77,7 +80,12 @@ export const streamCompletion = async (
   options: StreamOptions = {}
 ): Promise<string> => {
   const config = loadConfig();
-  const { silent = false, onToken, onUsage } = options;
+  const { silent = false, onToken, onUsage, signal } = options;
+
+  // Track host abort separately from the stall watchdog so a cancellation is not
+  // mistaken for a retryable network error and retried.
+  let hostAborted = false;
+  if (signal) signal.addEventListener('abort', () => { hostAborted = true; });
 
   if (!silent) startSpinner();
 
@@ -116,6 +124,9 @@ export const streamCompletion = async (
       // Instead the timer is reset every time data arrives, so it only fires
       // when the server has genuinely gone quiet.
       const controller = new AbortController();
+      // Combine the stall watchdog with any host signal: whichever fires first
+      // aborts the fetch.
+      const fetchSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
       let stallTimer: ReturnType<typeof setTimeout> | undefined;
       const armStall = () => {
         if (stallTimer) clearTimeout(stallTimer);
@@ -129,7 +140,7 @@ export const streamCompletion = async (
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: controller.signal,
+          signal: fetchSignal,
         });
 
         if (!response.ok) {
@@ -169,7 +180,9 @@ export const streamCompletion = async (
                 if (content) {
                   fullContent += content;
                   contentEmitted = true;
-                  if (!silent) incrementTokens();
+                  // Count tokens regardless of spinner mode so silent (library)
+                  // runs still accrue session token usage.
+                  incrementTokens();
                   onToken?.(content);
                 }
               } catch { /* ignore parse errors */ }
@@ -181,6 +194,7 @@ export const streamCompletion = async (
         }
       } catch (e) {
         if (contentEmitted) throw e;                 // mid-stream: cannot replay
+        if (hostAborted) throw e;                    // host cancelled: do not retry
         if (!isRetryableNetworkError(e)) throw e;    // permanent: surface it now
         lastError = e;
       } finally {

@@ -72,6 +72,19 @@ dev config
 | `-p, --prompt <text>` | Run in automated mode with given prompt |
 | `--resume` | Resume the last session used in current directory |
 | `--session <uuid>` | Use/resume a specific session by UUID |
+| `-y, --yolo` | Disable the command guard: turn off the safety classifier (denylist, risk backstop, LLM judge) and auto-approve every command — trust mode |
+
+### Command Safety
+
+Every command the agent executes is judged before it runs, in this order:
+
+1. **Denylist** — a tiny set of catastrophic, no-regret commands hard-blocked forever (fork bombs, `mkfs`/`wipefs`, raw writes to `/dev/*`, piping a `curl|wget` download straight into `sh`).
+2. **Risk backstop** — a cheap heuristic risk score (0-100) that hard-blocks anything scoring at/above `riskThreshold` (default 75), catching obfuscated catastrophic variants the denylist regexes miss.
+3. **LLM classifier** — gray-area commands (sudo, chmod, git push --force, scoped rm/mv, credential access, and anything scoring at/above `commandClassifierTriggerScore`, default 25) are sent to the command-classifier module, which returns **APPROVE** or **BLOCK**. On a BLOCK, the agent is told to try a different tool or approach and keeps working — the classifier never freezes the session for a human.
+
+The classifier is **on by default** for CLI usage. Passing `-y`/`--yolo` disables the whole guard (auto-approve). When off, only the denylist and risk backstop remain active and gray-area commands are allowed without an LLM call. The classifier is configured via `commandClassifierEnabled`, `commandClassifierTriggerScore`, `riskThreshold`, `commandClassifierCacheTtlMs`, and `commandClassifierTools`; `commandGuardLLM` is kept as a backward-compatible alias for `commandClassifierEnabled`.
+
+The same safety core powers both the `dev` CLI and embedded agents built with `createAgent`, and can be turned on/off per run via the `config.commandClassifierEnabled` option.
 
 ### Behavioral Differences: Interactive vs Automated (`-p`)
 

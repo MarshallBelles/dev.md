@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 import { program } from 'commander';
-import { loadConfig, openConfigInEditor, configExists, runFirstTimeSetup } from './config/index.js';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const { version } = require('../package.json');
-import {
-  createSession, loadSession, getLastSessionForDir, listSessions, cleanOldSessions, saveSession
-} from './sessions/index.js';
-import { runAgentLoop } from './agent/loop.js';
-import { displayWelcome, displaySessionInfo, setVerboseMode } from './ui/display.js';
+import { loadConfig, runFirstTimeSetup, configExists, openConfigInEditor } from './config/index.js';
+import { listSessions, getLastSessionForDir, cleanOldSessions } from './sessions/index.js';
+import { createAgent } from './lib/index.js';
+import { displayWelcome, displaySessionInfo } from './ui/display.js';
 import { c } from './ui/colors.js';
 import { EnhancedInput } from './ui/input.js';
-import { setThinking, toggleThinking, isThinkingEnabled } from './ui/thinking.js';
 import { resolveCommand, COMMANDS } from './ui/commands.js';
+
+const require = createRequire(import.meta.url);
+const version = require('../package.json').version;
 
 const cwd = process.cwd();
 
@@ -20,6 +18,25 @@ const ensureConfig = async (): Promise<void> => {
   if (!configExists()) {
     await runFirstTimeSetup();
   }
+};
+
+const printResult = (result: Awaited<ReturnType<ReturnType<typeof createAgent>['run']>>): number => {
+  if (result.type === 'error') {
+    console.log(c.red(`\n  Error: ${result.error.message}\n`));
+    return 1;
+  }
+  if (result.type === 'aborted') {
+    console.log(c.yellow('\n  Aborted.\n'));
+  }
+  // done / maxLoopsReached / idle are surfaced by the engine itself.
+  return 0;
+};
+
+// Prints the session id when a run begins, mirroring the former displaySessionInfo.
+const announceSession = (agent: ReturnType<typeof createAgent>) => {
+  agent.events.once('start', ({ sessionId }: { sessionId: string }) => {
+    displaySessionInfo(sessionId);
+  });
 };
 
 program
@@ -34,54 +51,45 @@ program
   .option('-t, --think', 'Enable thinking/reflection mode for deeper reasoning')
   .option('--resume', 'Resume the last session in this directory')
   .option('--session <uuid>', 'Resume a specific session by UUID')
+  .option('-y, --yolo', 'Disable the command guard: turn off the safety classifier and auto-approve every command (trust mode)')
   .action(async (opts) => {
     await ensureConfig();
     cleanOldSessions();
-    // Quiet overrides verbose, automated defaults to verbose, interactive defaults to compact
+
+    // The safety classifier is ON by default: gray-area commands are judged by
+    // the LLM and the agent keeps working after a decline. The classifier can be
+    // disabled in the config file (commandClassifierEnabled: false); --yolo opts
+    // all the way out and turns the whole guard off (auto-approve every command).
+    const config = opts.yolo ? { ...loadConfig(), commandGuardEnabled: false } : loadConfig();
     const verbose = opts.quiet ? false : (opts.verbose ?? !!opts.prompt);
-    setVerboseMode(verbose);
-    if (opts.think) setThinking(true);
-    displayWelcome();
 
-    let session;
-    const automated = !!opts.prompt;
-
-    if (opts.session) {
-      session = loadSession(opts.session);
-      if (!session) {
-        console.log(c.red(`  Session not found: ${opts.session}\n`));
-        process.exit(1);
-      }
-      displaySessionInfo(session.id, true);
-    } else if (opts.resume) {
-      session = getLastSessionForDir(cwd);
-      if (!session) {
-        console.log(c.red('  No previous session found in this directory\n'));
-        process.exit(1);
-      }
-      displaySessionInfo(session.id, true);
-    } else if (opts.prompt) {
-      session = createSession(cwd, opts.prompt);
-      displaySessionInfo(session.id);
-    } else {
-      session = createSession(cwd, '');
-      displaySessionInfo(session.id);
-      await interactiveMode(session);
+    // Interactive mode: no prompt/resume/session -> drive the agent through a REPL.
+    if (!opts.prompt && !opts.resume && !opts.session) {
+      const agent = createAgent({ config, verbose, thinking: opts.think, cwd });
+      announceSession(agent);
+      await agent.run(); // warmup: create the session (no model run until input)
+      displayWelcome();
+      await interactiveLoop(agent, config, verbose, opts.think);
       return;
     }
 
-    if (opts.prompt && !opts.resume && !opts.session) {
-      session.originalPrompt = opts.prompt;
-      session.history.push({ role: 'user', content: opts.prompt });
-      saveSession(session);
-    }
+    const agent = createAgent({ config, verbose, thinking: opts.think, cwd });
+    announceSession(agent);
 
-    try {
-      await runAgentLoop(session, { automated });
-    } catch (e) {
-      console.log(c.red(`\n  Error: ${(e as Error).message}\n`));
-      process.exit(1);
+    let result;
+    if (opts.session) {
+      result = await agent.resume(opts.session);
+    } else if (opts.resume) {
+      const last = getLastSessionForDir(cwd);
+      if (!last) {
+        console.log(c.red('  No previous session found in this directory\n'));
+        process.exit(1);
+      }
+      result = await agent.resume(last.id);
+    } else {
+      result = await agent.run({ prompt: opts.prompt, automated: true });
     }
+    process.exit(printResult(result));
   });
 
 program
@@ -120,28 +128,38 @@ program
     }
   });
 
-async function interactiveMode(session: ReturnType<typeof createSession>) {
-  const input = new EnhancedInput({ cwd });
+// Interactive REPL. The agent is driven through createAgent: the first run()
+// warms up (creates the session without running), then each user turn is fed
+// via inject() and re-run. 'new' and 'think' recreate the agent so new settings
+// take effect while keeping the current conversation.
+async function interactiveLoop(initialAgent: ReturnType<typeof createAgent>, config: ReturnType<typeof loadConfig>, verbose: boolean, initialThinking: boolean | undefined) {
+  let thinking = initialThinking ?? false;
+  let { cwd: cwdLocal } = initialAgent;
 
-  console.log(c.dim('  Type your request, or "exit" to quit'));
+  const makeAgent = () => createAgent({ config, verbose, thinking, cwd: cwdLocal });
+
+  let agent = initialAgent;
+  announceSession(agent);
+
+  const input = new EnhancedInput({ cwd: cwdLocal });
   input.showHelp();
+  console.log(c.dim('  Type your request, or "exit" to quit'));
 
   while (true) {
     const text = await input.getInput();
     if (!text) continue;
 
-    // Slash commands (and the bare legacy forms: exit/quit/new/help/?).
     const command = resolveCommand(text);
     if (command) {
       if (command.name === 'exit') {
+        agent.stop();
         console.log(c.dim('\n  Goodbye!\n'));
         input.close();
         break;
       }
       if (command.name === 'new') {
-        session = createSession(cwd, '');
-        displaySessionInfo(session.id);
-        console.log(c.dim('  Started new session\n'));
+        agent = makeAgent();
+        await agent.run();
         continue;
       }
       if (command.name === 'help') {
@@ -149,8 +167,10 @@ async function interactiveMode(session: ReturnType<typeof createSession>) {
         continue;
       }
       if (command.name === 'think') {
-        toggleThinking();
-        console.log(`  ${c.yellow('Thinking mode:')} ${isThinkingEnabled() ? c.green('ON') : c.red('OFF')}\n`);
+        thinking = !thinking;
+        agent = makeAgent();
+        await agent.run();
+        console.log(`  ${c.yellow('Thinking mode:')} ${thinking ? c.green('ON') : c.red('OFF')}\n`);
         continue;
       }
       if (command.name === 'config') {
@@ -159,8 +179,7 @@ async function interactiveMode(session: ReturnType<typeof createSession>) {
         continue;
       }
       if (command.name === 'sessions') {
-        // listSessions() returns every session; narrow to this directory.
-        const all = listSessions().filter(s => s.workingDirectory === cwd);
+        const all = listSessions().filter(s => s.workingDirectory === cwdLocal);
         if (!all.length) console.log(c.dim('  No sessions yet\n'));
         else {
           console.log('');
@@ -172,31 +191,20 @@ async function interactiveMode(session: ReturnType<typeof createSession>) {
         continue;
       }
       if (command.name === 'status') {
-        displaySessionInfo(session.id);
-        console.log(`  ${c.dim('Tokens this session:')} ${session.totalTokens.toLocaleString()}`);
-        console.log(`  ${c.dim('Compactions:')} ${session.compressions.length}`);
-        console.log(`  ${c.dim('Thinking mode:')} ${isThinkingEnabled() ? 'ON' : 'OFF'}\n`);
+        console.log(c.dim(`  Session: ${agent.sessionId}\n`));
+        console.log(`  ${c.dim('Thinking mode:')} ${thinking ? c.green('ON') : c.red('OFF')}\n`);
         continue;
       }
     }
 
-    // An unrecognised slash command is a typo, not a prompt - saying so beats
-    // silently sending "/exti" to the model as a task.
     if (text.trim().startsWith('/')) {
       console.log(c.yellow(`  Unknown command: ${text.trim()}`));
       console.log(c.dim(`  Available: ${COMMANDS.map(cm => '/' + cm.name).join(', ')}\n`));
       continue;
     }
 
-    if (!session.originalPrompt) session.originalPrompt = text;
-    session.history.push({ role: 'user', content: text });
-    saveSession(session);
-
-    try {
-      await runAgentLoop(session, { automated: false });
-    } catch (e) {
-      console.log(c.red(`\n  Error: ${(e as Error).message}\n`));
-    }
+    agent.inject('user', text);
+    await agent.run();
     console.log(c.dim('\n  Continue chatting, "new" for new session, "exit" to quit.\n'));
   }
 }

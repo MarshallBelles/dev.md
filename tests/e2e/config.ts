@@ -1,5 +1,7 @@
-// E2E test configuration for real LLM endpoint
-export const E2E_LLM_ENDPOINT = process.env.E2E_API_URL || 'http://100.105.25.116:8007/v1';
+// E2E test configuration for real LLM endpoint. The default is the production
+// gateway served by carrier.local:8007; override with E2E_API_URL to target a
+// different endpoint (e.g. a staging host).
+export const E2E_LLM_ENDPOINT = process.env.E2E_API_URL || 'http://carrier.local:8007/v1';
 export const E2E_LLM_MODEL = process.env.E2E_MODEL || 'mars';
 export const E2E_LLM_API_KEY = process.env.E2E_API_KEY || '';
 export const E2E_TIMEOUT = Number(process.env.E2E_TIMEOUT || 30000);
